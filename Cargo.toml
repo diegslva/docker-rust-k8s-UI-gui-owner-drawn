@@ -1,0 +1,20 @@
+[package]
+name = "docker-rust-k8s-ui-gui"
+version = "0.1.0"
+edition = "2024"
+authors = ["Diego L. Silva (diegslva)"]
+description = "Owner-drawn GUI framework - Phase 0: Window bootstrap"
+repository = "https://github.com/diegslva/docker-rust-k8s-UI-gui-owner-drawn"
+license = "MIT"
+rust-version = "1.85"
+
+[dependencies]
+winit = "0.30"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+anyhow = "1.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
