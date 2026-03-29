@@ -1,38 +1,57 @@
 use anyhow::{Context, Result};
+use bytemuck::cast_slice;
 use glyphon::{
     Cache, FontSystem, Resolution, SwashCache, TextArea, TextAtlas, TextRenderer, Viewport,
 };
 use std::sync::Arc;
 use tracing::{debug, info};
 use wgpu::{
-    CommandEncoderDescriptor, Device, DeviceDescriptor, Features, Instance, InstanceDescriptor,
-    Limits, LoadOp, Operations, Queue, RenderPassColorAttachment, RenderPassDescriptor,
-    RenderPipeline, RequestAdapterOptions, StoreOp, Surface, SurfaceConfiguration, TextureUsages,
-    TextureViewDescriptor,
+    BindGroup, BindGroupLayout, Buffer, CommandEncoderDescriptor, DepthStencilState, Device,
+    DeviceDescriptor, Features, Instance, InstanceDescriptor, Limits, LoadOp, Operations, Queue,
+    RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
+    RenderPipeline, RequestAdapterOptions, StoreOp, Surface, SurfaceConfiguration, Texture,
+    TextureUsages, TextureViewDescriptor,
 };
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
+use crate::camera::CameraUniform;
+use crate::mesh::{Mesh, Vertex3D};
 use crate::ui::Label;
 
-const SHADER_SOURCE: &str = include_str!("shader.wgsl");
+const SHADER_2D: &str = include_str!("shader.wgsl");
+const SHADER_3D: &str = include_str!("shader3d.wgsl");
 const FONT_REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
 const FONT_BOLD: &[u8] = include_bytes!("../assets/fonts/Inter-Bold.ttf");
 
-/// Estado da pipeline grafica wgpu com sistema de texto glyphon integrado.
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+/// Estado da pipeline grafica wgpu.
 ///
-/// Responsabilidade: GPU, surface, pipeline de gradiente, atlas de texto.
-/// Nao conhece o conteudo da tela — recebe os Labels prontos em `render()`.
+/// Suporta dois modos de renderizacao por frame:
+/// - Pipeline 2D: gradiente radial fullscreen (shader.wgsl)
+/// - Pipeline 3D: mesh com iluminacao Phong + depth buffer (shader3d.wgsl)
+/// - Overlay de texto: glyphon sobre qualquer combinacao dos dois
 pub struct GpuState {
     surface: Surface<'static>,
-    device: Device,
+    pub device: Device,
     queue: Queue,
-    config: SurfaceConfiguration,
-    pipeline: RenderPipeline,
+    pub config: SurfaceConfiguration,
+    // Pipeline 2D — gradiente radial
+    pipeline_2d: RenderPipeline,
+    // Pipeline 3D — mesh Phong
+    pipeline_3d: RenderPipeline,
+    #[allow(dead_code)]
+    // mantido vivo: usado na criacao da pipeline_3d, referenciado pelo bind group
+    camera_bind_group_layout: BindGroupLayout,
+    camera_buffer: Buffer,
+    camera_bind_group: BindGroup,
+    depth_texture: Texture,
     size: PhysicalSize<u32>,
+    // Sistema de texto
     font_system: FontSystem,
     swash_cache: SwashCache,
-    #[allow(dead_code)] // mantido vivo: referenciado por TextAtlas e Viewport internamente
+    #[allow(dead_code)]
     cache: Cache,
     viewport: Viewport,
     text_atlas: TextAtlas,
@@ -40,7 +59,6 @@ pub struct GpuState {
 }
 
 impl GpuState {
-    /// Inicializa wgpu e o sistema de texto glyphon sobre a janela fornecida.
     pub async fn new(window: Arc<Window>) -> Result<Self> {
         let size = window.inner_size();
 
@@ -101,9 +119,50 @@ impl GpuState {
         };
         surface.configure(&device, &config);
 
-        let pipeline = Self::build_pipeline(&device, &config);
+        // Pipeline 2D — gradiente radial (sem depth, sem vertex buffer)
+        let pipeline_2d = Self::build_pipeline_2d(&device, &config);
 
-        // Carrega Inter Regular e Bold embutidas no binario
+        // Bind group layout para o uniform da camera 3D
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("camera_bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        // Camera buffer — preenchido a cada frame com CameraUniform
+        let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("camera_buffer"),
+            size: std::mem::size_of::<CameraUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("camera_bg"),
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+
+        // Depth texture para z-test da mesh 3D
+        let depth_texture =
+            Self::create_depth_texture(&device, size.width.max(1), size.height.max(1));
+
+        // Pipeline 3D — mesh Phong com depth buffer
+        let pipeline_3d = Self::build_pipeline_3d(&device, &config, &camera_bind_group_layout);
+
+        // Sistema de texto
         let mut font_system = FontSystem::new();
         font_system.db_mut().load_font_data(FONT_REGULAR.to_vec());
         font_system.db_mut().load_font_data(FONT_BOLD.to_vec());
@@ -112,21 +171,34 @@ impl GpuState {
         let cache = Cache::new(&device);
         let viewport = Viewport::new(&device, &cache);
         let mut text_atlas = TextAtlas::new(&device, &queue, &cache, surface_format);
+        // TextRenderer precisa conhecer o depth format do render pass para compatibilidade.
+        // depth_write_enabled: false — texto nao escreve no depth buffer, apenas e desenhado por cima.
         let text_renderer = TextRenderer::new(
             &mut text_atlas,
             &device,
             wgpu::MultisampleState::default(),
-            None,
+            Some(DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
         );
 
-        info!("sistema de texto inicializado com Inter Regular + Bold");
+        info!("GpuState inicializado: pipeline 2D + 3D + texto");
 
         Ok(Self {
             surface,
             device,
             queue,
             config,
-            pipeline,
+            pipeline_2d,
+            pipeline_3d,
+            camera_bind_group_layout,
+            camera_buffer,
+            camera_bind_group,
+            depth_texture,
             size,
             font_system,
             swash_cache,
@@ -137,18 +209,15 @@ impl GpuState {
         })
     }
 
-    /// Acesso ao FontSystem para criacao de Labels fora do renderer.
     pub fn font_system_mut(&mut self) -> &mut FontSystem {
         &mut self.font_system
     }
 
-    /// Tamanho atual da surface em pixels fisicos. Usado pelo App para layout inicial dos Labels.
     #[allow(dead_code)]
     pub fn size(&self) -> PhysicalSize<u32> {
         self.size
     }
 
-    /// Reconstroi a surface apos redimensionamento da janela.
     pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
         if new_size.width == 0 || new_size.height == 0 {
             return;
@@ -157,19 +226,32 @@ impl GpuState {
         self.config.width = new_size.width;
         self.config.height = new_size.height;
         self.surface.configure(&self.device, &self.config);
+        // Recriar depth texture no novo tamanho
+        self.depth_texture =
+            Self::create_depth_texture(&self.device, new_size.width, new_size.height);
         debug!(
             width = new_size.width,
             height = new_size.height,
-            "surface reconfigurada"
+            "surface e depth texture reconfigurados"
         );
     }
 
-    /// Renderiza um frame: gradiente radial + todos os Labels fornecidos.
+    /// Renderiza um frame com gradiente 2D + mesh 3D + overlay de texto.
     ///
-    /// Os Labels sao posicionados e coloridos por quem os criou (a tela/app).
-    /// O renderer apenas os converte em TextAreas e passa ao glyphon.
-    pub fn render(&mut self, labels: &[&Label]) -> Result<()> {
-        // Atualizar resolucao do viewport glyphon — necessario todo frame
+    /// `camera_uniform`: produzido pelo OrbitalCamera do App (ja com yaw atualizado).
+    /// `mesh`: a mesh 3D carregada (skull.obj ou outra).
+    /// `labels`: overlay de texto sobre a cena 3D.
+    pub fn render(
+        &mut self,
+        camera_uniform: &CameraUniform,
+        mesh: &Mesh,
+        labels: &[&Label],
+    ) -> Result<()> {
+        // Atualizar camera buffer na GPU
+        self.queue
+            .write_buffer(&self.camera_buffer, 0, cast_slice(&[*camera_uniform]));
+
+        // Atualizar resolucao do viewport glyphon
         self.viewport.update(
             &self.queue,
             Resolution {
@@ -178,13 +260,12 @@ impl GpuState {
             },
         );
 
-        // Converter cada Label em TextArea (operacao barata, sem alocacao de GPU)
+        // Preparar texto (CPU side) antes do render pass
         let text_areas: Vec<TextArea> = labels
             .iter()
             .map(|l| l.as_text_area(self.config.width, self.config.height))
             .collect();
 
-        // Preparar texto para GPU — borrow split explicito para satisfazer o borrow checker
         {
             let GpuState {
                 text_renderer,
@@ -196,7 +277,6 @@ impl GpuState {
                 swash_cache,
                 ..
             } = self;
-
             text_renderer
                 .prepare(
                     device,
@@ -207,7 +287,7 @@ impl GpuState {
                     text_areas,
                     swash_cache,
                 )
-                .context("falha ao preparar texto para GPU")?;
+                .context("falha ao preparar texto")?;
         }
 
         let output = match self.surface.get_current_texture() {
@@ -223,6 +303,10 @@ impl GpuState {
             .texture
             .create_view(&TextureViewDescriptor::default());
 
+        let depth_view = self
+            .depth_texture
+            .create_view(&TextureViewDescriptor::default());
+
         let mut encoder = self
             .device
             .create_command_encoder(&CommandEncoderDescriptor {
@@ -230,33 +314,47 @@ impl GpuState {
             });
 
         {
-            let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("main_pass"),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
                     ops: Operations {
                         load: LoadOp::Clear(wgpu::Color {
-                            r: 0.118,
-                            g: 0.118,
-                            b: 0.141,
+                            r: 0.07,
+                            g: 0.07,
+                            b: 0.09,
                             a: 1.0,
                         }),
                         store: StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(Operations {
+                        load: LoadOp::Clear(1.0),
+                        store: StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
 
-            // 1. Gradiente radial fullscreen
-            render_pass.set_pipeline(&self.pipeline);
-            render_pass.draw(0..6, 0..1);
+            // 1. Gradiente radial 2D (fullscreen quad, sem depth write)
+            pass.set_pipeline(&self.pipeline_2d);
+            pass.draw(0..6, 0..1);
 
-            // 2. Todos os Labels sobre o gradiente
+            // 2. Mesh 3D sobre o gradiente (com depth test + depth write)
+            pass.set_pipeline(&self.pipeline_3d);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+
+            // 3. Texto overlay (glyphon gerencia sua propria pipeline internamente)
             self.text_renderer
-                .render(&self.text_atlas, &self.viewport, &mut render_pass)
+                .render(&self.text_atlas, &self.viewport, &mut pass)
                 .context("falha ao renderizar texto")?;
         }
 
@@ -267,20 +365,39 @@ impl GpuState {
         Ok(())
     }
 
-    fn build_pipeline(device: &Device, config: &SurfaceConfiguration) -> RenderPipeline {
+    // --- Helpers privados ---
+
+    fn create_depth_texture(device: &Device, width: u32, height: u32) -> Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("depth_texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+    }
+
+    fn build_pipeline_2d(device: &Device, config: &SurfaceConfiguration) -> RenderPipeline {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("main_shader"),
-            source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
+            label: Some("shader_2d"),
+            source: wgpu::ShaderSource::Wgsl(SHADER_2D.into()),
         });
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pipeline_layout"),
+            label: Some("layout_2d"),
             bind_group_layouts: &[],
             push_constant_ranges: &[],
         });
 
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("main_pipeline"),
+            label: Some("pipeline_2d"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -300,19 +417,70 @@ impl GpuState {
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
+                ..Default::default()
             },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
+            // Pipeline 2D nao escreve no depth buffer (gradiente e fundo, nao objeto 3D)
+            depth_stencil: Some(DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        })
+    }
+
+    fn build_pipeline_3d(
+        device: &Device,
+        config: &SurfaceConfiguration,
+        camera_bgl: &BindGroupLayout,
+    ) -> RenderPipeline {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("shader_3d"),
+            source: wgpu::ShaderSource::Wgsl(SHADER_3D.into()),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("layout_3d"),
+            bind_group_layouts: &[camera_bgl],
+            push_constant_ranges: &[],
+        });
+
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("pipeline_3d"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex3D::LAYOUT],
+                compilation_options: Default::default(),
             },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
         })
