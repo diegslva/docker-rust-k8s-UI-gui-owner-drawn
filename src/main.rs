@@ -14,17 +14,24 @@ use tracing_subscriber::{EnvFilter, fmt};
 use ui::{Color, Label};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Icon, Window, WindowAttributes, WindowId};
+use winit::window::{CursorIcon, Icon, Window, WindowAttributes, WindowId};
 
 const WINDOW_WIDTH: f64 = 1280.0;
 const WINDOW_HEIGHT: f64 = 720.0;
 const ICON_BYTES: &[u8] = include_bytes!("../assets/icon_256x256.png");
 const SKULL_OBJ: &str = "assets/models/skull.obj";
 
-/// Velocidade de rotacao automatica do cranio (radianos por segundo).
-const ROTATION_SPEED: f32 = 0.4;
+/// Sensibilidade do drag de mouse (radianos por pixel).
+const MOUSE_SENSITIVITY: f32 = 0.005;
+/// Sensibilidade do zoom via scroll.
+const ZOOM_SENSITIVITY: f32 = 0.3;
+/// Limites de distancia da camera.
+const ZOOM_MIN: f32 = 1.5;
+const ZOOM_MAX: f32 = 20.0;
+/// Limite vertical da camera (evita gimbal lock no polo).
+const PITCH_LIMIT: f32 = 1.5;
 
 struct App {
     window: Option<Arc<Window>>,
@@ -33,6 +40,9 @@ struct App {
     camera: OrbitalCamera,
     labels: Vec<Label>,
     last_frame: Instant,
+    // Estado do mouse
+    mouse_pressed: bool,
+    mouse_pos: Option<(f64, f64)>,
 }
 
 impl App {
@@ -41,9 +51,11 @@ impl App {
             window: None,
             gpu: None,
             mesh: None,
-            camera: OrbitalCamera::new(5.0),
+            camera: OrbitalCamera::new(9.0),
             labels: Vec::new(),
             last_frame: Instant::now(),
+            mouse_pressed: false,
+            mouse_pos: None,
         }
     }
 
@@ -66,7 +78,7 @@ impl App {
 
         let mut sub = Label::new(
             fs,
-            "Phong shading  \u{00B7}  Depth buffer  \u{00B7}  OBJ loader",
+            "Arraste para girar  \u{00B7}  Scroll para zoom",
             16.0,
             Color::rgb(140, 150, 165),
             0.0,
@@ -155,7 +167,6 @@ impl ApplicationHandler for App {
         };
         self.gpu = Some(gpu);
 
-        // Carregar mesh do cranio
         let device = &self.gpu.as_ref().unwrap().device;
         match Mesh::from_obj(device, SKULL_OBJ) {
             Ok(m) => {
@@ -165,9 +176,9 @@ impl ApplicationHandler for App {
             Err(err) => warn!(error = %err, "falha ao carregar skull.obj"),
         }
 
-        // Camera centrada no cranio (bounding center aproximado do modelo Blender)
+        // Camera centrada no cranio, afastada para caber na tela
         self.camera.target = glam::Vec3::new(0.0, 2.5, 0.0);
-        self.camera.distance = 5.0;
+        self.camera.distance = 9.0;
 
         let size = window.inner_size();
         self.build_labels(size);
@@ -188,6 +199,50 @@ impl ApplicationHandler for App {
                 info!("close solicitado");
                 event_loop.exit();
             }
+
+            // --- Mouse: botao pressionado / solto ---
+            WindowEvent::MouseInput { state, button, .. } => {
+                if button == MouseButton::Left {
+                    self.mouse_pressed = state == ElementState::Pressed;
+                    if let Some(w) = &self.window {
+                        let cursor = if self.mouse_pressed {
+                            CursorIcon::Grabbing
+                        } else {
+                            CursorIcon::Grab
+                        };
+                        w.set_cursor(cursor);
+                    }
+                    // Ao soltar, resetar posicao para evitar salto no proximo drag
+                    if state == ElementState::Released {
+                        self.mouse_pos = None;
+                    }
+                }
+            }
+
+            // --- Mouse: movimento — drag para rotacionar ---
+            WindowEvent::CursorMoved { position, .. } => {
+                if self.mouse_pressed {
+                    if let Some((prev_x, prev_y)) = self.mouse_pos {
+                        let dx = (position.x - prev_x) as f32;
+                        let dy = (position.y - prev_y) as f32;
+                        self.camera.yaw += dx * MOUSE_SENSITIVITY;
+                        self.camera.pitch = (self.camera.pitch - dy * MOUSE_SENSITIVITY)
+                            .clamp(-PITCH_LIMIT, PITCH_LIMIT);
+                    }
+                }
+                self.mouse_pos = Some((position.x, position.y));
+            }
+
+            // --- Mouse: scroll — zoom ---
+            WindowEvent::MouseWheel { delta, .. } => {
+                let scroll = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.01,
+                };
+                self.camera.distance =
+                    (self.camera.distance - scroll * ZOOM_SENSITIVITY).clamp(ZOOM_MIN, ZOOM_MAX);
+            }
+
             WindowEvent::Resized(new_size) => {
                 debug!(width = new_size.width, height = new_size.height, "resize");
                 if let Some(gpu) = &mut self.gpu {
@@ -198,13 +253,10 @@ impl ApplicationHandler for App {
                     w.request_redraw();
                 }
             }
+
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
-                let dt = now.duration_since(self.last_frame).as_secs_f32();
                 self.last_frame = now;
-
-                // Auto-rotacao suave ao redor do cranio
-                self.camera.yaw += ROTATION_SPEED * dt;
 
                 let w = self.gpu.as_ref().map_or(1280, |g| g.config.width);
                 let h = self.gpu.as_ref().map_or(720, |g| g.config.height);
@@ -220,6 +272,7 @@ impl ApplicationHandler for App {
                     w.request_redraw();
                 }
             }
+
             _ => {}
         }
     }
