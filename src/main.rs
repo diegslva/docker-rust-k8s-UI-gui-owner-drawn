@@ -148,7 +148,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                if let Some(gpu) = &self.gpu {
+                if let Some(gpu) = &mut self.gpu {
                     if let Err(err) = gpu.render() {
                         warn!(error = %err, "erro durante render, pulando frame");
                     }
