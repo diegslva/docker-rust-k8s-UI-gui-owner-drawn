@@ -13,7 +13,10 @@ winit = "0.30"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 anyhow = "1.0"
+bytemuck = { version = "1", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+pollster = "0.3"
+wgpu = "24"
 
 [profile.release]
 lto = true

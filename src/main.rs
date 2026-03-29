@@ -1,4 +1,8 @@
+mod renderer;
+
 use anyhow::{Context, Result};
+use renderer::GpuState;
+use std::sync::Arc;
 use tracing::{debug, info, warn};
 use tracing_subscriber::{EnvFilter, fmt};
 use winit::application::ApplicationHandler;
@@ -12,12 +16,17 @@ const WINDOW_HEIGHT: f64 = 720.0;
 const ICON_BYTES: &[u8] = include_bytes!("../assets/icon_256x256.png");
 
 struct App {
-    window: Option<Window>,
+    // Arc e necessario para compartilhar a janela com GpuState (lifetime 'static da surface)
+    window: Option<Arc<Window>>,
+    gpu: Option<GpuState>,
 }
 
 impl App {
     fn new() -> Self {
-        Self { window: None }
+        Self {
+            window: None,
+            gpu: None,
+        }
     }
 }
 
@@ -43,7 +52,6 @@ fn center_position(event_loop: &ActiveEventLoop) -> Option<PhysicalPosition<i32>
     let monitor_pos = monitor.position();
     let scale = monitor.scale_factor();
 
-    // Converter tamanho logico da janela para fisico no scale do monitor
     let window_physical_width = (WINDOW_WIDTH * scale) as i32;
     let window_physical_height = (WINDOW_HEIGHT * scale) as i32;
 
@@ -55,7 +63,6 @@ fn center_position(event_loop: &ActiveEventLoop) -> Option<PhysicalPosition<i32>
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // Guard: em desktop resumed() dispara uma vez, mas em mobile pode repetir
         if self.window.is_some() {
             debug!("resumed() chamado com janela ja existente, ignorando");
             return;
@@ -73,29 +80,46 @@ impl ApplicationHandler for App {
         };
 
         let mut attributes = WindowAttributes::default()
-            .with_title("docker-rust-k8s-ui-gui [Phase 0]")
+            .with_title("docker-rust-k8s-ui-gui [Phase 1]")
             .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT));
 
         if let Some(icon) = icon {
             attributes = attributes.with_window_icon(Some(icon));
         }
 
-        match event_loop.create_window(attributes) {
-            Ok(window) => {
-                // Centralizar apos criacao — posicao depende do monitor real
-                if let Some(pos) = center_position(event_loop) {
-                    window.set_outer_position(pos);
-                    debug!(x = pos.x, y = pos.y, "janela centralizada no monitor");
-                }
-
-                info!(window_id = ?window.id(), "janela criada com sucesso");
-                self.window = Some(window);
-            }
+        let window = match event_loop.create_window(attributes) {
+            Ok(w) => Arc::new(w),
             Err(err) => {
                 warn!(error = %err, "falha ao criar janela, encerrando");
                 event_loop.exit();
+                return;
             }
+        };
+
+        if let Some(pos) = center_position(event_loop) {
+            window.set_outer_position(pos);
+            debug!(x = pos.x, y = pos.y, "janela centralizada no monitor");
         }
+
+        info!(window_id = ?window.id(), "janela criada com sucesso");
+
+        // Inicializar wgpu de forma sincrona usando block_on do pollster
+        let gpu = match pollster::block_on(GpuState::new(Arc::clone(&window))) {
+            Ok(state) => state,
+            Err(err) => {
+                warn!(error = %err, "falha ao inicializar wgpu, encerrando");
+                event_loop.exit();
+                return;
+            }
+        };
+
+        info!("pipeline wgpu inicializada com sucesso");
+
+        // Forcar primeiro frame imediatamente
+        window.request_redraw();
+
+        self.window = Some(window);
+        self.gpu = Some(gpu);
     }
 
     fn window_event(
@@ -109,15 +133,27 @@ impl ApplicationHandler for App {
                 info!("close solicitado pelo usuario");
                 event_loop.exit();
             }
-            WindowEvent::Resized(size) => {
+            WindowEvent::Resized(new_size) => {
                 debug!(
-                    width = size.width,
-                    height = size.height,
+                    width = new_size.width,
+                    height = new_size.height,
                     "janela redimensionada"
                 );
+                if let Some(gpu) = &mut self.gpu {
+                    gpu.resize(new_size);
+                }
+                // Solicitar redraw apos resize para nao ficar frame em branco
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
             }
             WindowEvent::RedrawRequested => {
-                // Phase 0: sem rendering, mas mantemos o contrato do event loop
+                if let Some(gpu) = &self.gpu {
+                    if let Err(err) = gpu.render() {
+                        warn!(error = %err, "erro durante render, pulando frame");
+                    }
+                }
+                // Render continuo: solicita proximo frame
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -127,7 +163,6 @@ impl ApplicationHandler for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        // Cleanup vai aqui — run_app() nao retorna em todas as plataformas (macOS)
         info!("shutdown limpo concluido");
     }
 }
@@ -147,7 +182,8 @@ fn main() -> Result<()> {
     );
 
     let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Wait);
+    // Poll para render continuo — wgpu precisa do loop ativo
+    event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = App::new();
     event_loop.run_app(&mut app)?;
