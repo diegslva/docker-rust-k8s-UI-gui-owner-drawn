@@ -15,8 +15,9 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 anyhow = "1.0"
 bytemuck = { version = "1", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+glyphon = "0.9"
 pollster = "0.3"
-wgpu = "24"
+wgpu = "25"
 
 [profile.release]
 lto = true
