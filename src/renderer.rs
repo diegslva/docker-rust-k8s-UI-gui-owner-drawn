@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use glyphon::{
-    Attrs, Buffer, Cache, Color, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache,
-    TextArea, TextAtlas, TextBounds, TextRenderer, Viewport, Weight,
+    Cache, FontSystem, Resolution, SwashCache, TextArea, TextAtlas, TextRenderer, Viewport,
 };
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -14,15 +13,16 @@ use wgpu::{
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
 
+use crate::ui::Label;
+
 const SHADER_SOURCE: &str = include_str!("shader.wgsl");
 const FONT_REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
 const FONT_BOLD: &[u8] = include_bytes!("../assets/fonts/Inter-Bold.ttf");
 
 /// Estado da pipeline grafica wgpu com sistema de texto glyphon integrado.
 ///
-/// Criado uma vez apos a janela estar disponivel e vivo ate o shutdown.
-/// `resize()` deve ser chamado em todo WindowEvent::Resized.
-/// `render()` requer `&mut self` pois prepare() do glyphon muta o atlas e o renderer.
+/// Responsabilidade: GPU, surface, pipeline de gradiente, atlas de texto.
+/// Nao conhece o conteudo da tela — recebe os Labels prontos em `render()`.
 pub struct GpuState {
     surface: Surface<'static>,
     device: Device,
@@ -30,7 +30,6 @@ pub struct GpuState {
     config: SurfaceConfiguration,
     pipeline: RenderPipeline,
     size: PhysicalSize<u32>,
-    // Sistema de texto — glyphon + cosmic-text
     font_system: FontSystem,
     swash_cache: SwashCache,
     #[allow(dead_code)] // mantido vivo: referenciado por TextAtlas e Viewport internamente
@@ -38,8 +37,6 @@ pub struct GpuState {
     viewport: Viewport,
     text_atlas: TextAtlas,
     text_renderer: TextRenderer,
-    title_buffer: Buffer,
-    subtitle_buffer: Buffer,
 }
 
 impl GpuState {
@@ -106,7 +103,7 @@ impl GpuState {
 
         let pipeline = Self::build_pipeline(&device, &config);
 
-        // Sistema de texto — carrega Inter Regular e Bold embutidas no binario
+        // Carrega Inter Regular e Bold embutidas no binario
         let mut font_system = FontSystem::new();
         font_system.db_mut().load_font_data(FONT_REGULAR.to_vec());
         font_system.db_mut().load_font_data(FONT_BOLD.to_vec());
@@ -121,38 +118,6 @@ impl GpuState {
             wgpu::MultisampleState::default(),
             None,
         );
-
-        // Buffer do titulo — Inter Bold 52px
-        let mut title_buffer = Buffer::new(&mut font_system, Metrics::new(52.0, 64.0));
-        title_buffer.set_size(
-            &mut font_system,
-            Some(size.width as f32),
-            Some(size.height as f32),
-        );
-        title_buffer.set_text(
-            &mut font_system,
-            "docker-rust-k8s-ui-gui",
-            &Attrs::new()
-                .family(Family::Name("Inter"))
-                .weight(Weight::BOLD),
-            Shaping::Advanced,
-        );
-        title_buffer.shape_until_scroll(&mut font_system, false);
-
-        // Buffer da legenda — Inter Regular 22px
-        let mut subtitle_buffer = Buffer::new(&mut font_system, Metrics::new(22.0, 32.0));
-        subtitle_buffer.set_size(
-            &mut font_system,
-            Some(size.width as f32),
-            Some(size.height as f32),
-        );
-        subtitle_buffer.set_text(
-            &mut font_system,
-            "Phase 2 \u{00B7} Texto na GPU com glyphon + Inter",
-            &Attrs::new().family(Family::Name("Inter")),
-            Shaping::Advanced,
-        );
-        subtitle_buffer.shape_until_scroll(&mut font_system, false);
 
         info!("sistema de texto inicializado com Inter Regular + Bold");
 
@@ -169,12 +134,21 @@ impl GpuState {
             viewport,
             text_atlas,
             text_renderer,
-            title_buffer,
-            subtitle_buffer,
         })
     }
 
-    /// Reconstroi a surface e atualiza o viewport apos redimensionamento da janela.
+    /// Acesso ao FontSystem para criacao de Labels fora do renderer.
+    pub fn font_system_mut(&mut self) -> &mut FontSystem {
+        &mut self.font_system
+    }
+
+    /// Tamanho atual da surface em pixels fisicos. Usado pelo App para layout inicial dos Labels.
+    #[allow(dead_code)]
+    pub fn size(&self) -> PhysicalSize<u32> {
+        self.size
+    }
+
+    /// Reconstroi a surface apos redimensionamento da janela.
     pub fn resize(&mut self, new_size: PhysicalSize<u32>) {
         if new_size.width == 0 || new_size.height == 0 {
             return;
@@ -183,39 +157,18 @@ impl GpuState {
         self.config.width = new_size.width;
         self.config.height = new_size.height;
         self.surface.configure(&self.device, &self.config);
-
-        // Atualizar tamanho dos buffers de texto para o novo viewport
-        self.title_buffer.set_size(
-            &mut self.font_system,
-            Some(new_size.width as f32),
-            Some(new_size.height as f32),
-        );
-        self.subtitle_buffer.set_size(
-            &mut self.font_system,
-            Some(new_size.width as f32),
-            Some(new_size.height as f32),
-        );
-
         debug!(
             width = new_size.width,
             height = new_size.height,
-            "surface e viewport reconfigurados"
+            "surface reconfigurada"
         );
     }
 
-    /// Calcula a largura maxima de um buffer de texto apos shaping.
-    fn text_width(buffer: &Buffer) -> f32 {
-        buffer
-            .layout_runs()
-            .map(|run| run.line_w)
-            .fold(0.0_f32, f32::max)
-    }
-
-    /// Renderiza um frame: gradiente radial + texto centralizado.
-    pub fn render(&mut self) -> Result<()> {
-        let w = self.config.width as f32;
-        let h = self.config.height as f32;
-
+    /// Renderiza um frame: gradiente radial + todos os Labels fornecidos.
+    ///
+    /// Os Labels sao posicionados e coloridos por quem os criou (a tela/app).
+    /// O renderer apenas os converte em TextAreas e passa ao glyphon.
+    pub fn render(&mut self, labels: &[&Label]) -> Result<()> {
         // Atualizar resolucao do viewport glyphon — necessario todo frame
         self.viewport.update(
             &self.queue,
@@ -225,18 +178,13 @@ impl GpuState {
             },
         );
 
-        // Calcular posicao centralizada do texto
-        let title_w = Self::text_width(&self.title_buffer);
-        let subtitle_w = Self::text_width(&self.subtitle_buffer);
-        let title_left = ((w - title_w) / 2.0).max(0.0);
-        let subtitle_left = ((w - subtitle_w) / 2.0).max(0.0);
+        // Converter cada Label em TextArea (operacao barata, sem alocacao de GPU)
+        let text_areas: Vec<TextArea> = labels
+            .iter()
+            .map(|l| l.as_text_area(self.config.width, self.config.height))
+            .collect();
 
-        // Posicionar verticalmente: titulo aos 40% da altura, legenda 72px abaixo
-        let title_top = h * 0.40;
-        let subtitle_top = title_top + 72.0;
-
-        // Preparar texto para GPU (CPU side) — deve ocorrer antes do render pass
-        // Split de borrows explicito para satisfazer o borrow checker
+        // Preparar texto para GPU — borrow split explicito para satisfazer o borrow checker
         {
             let GpuState {
                 text_renderer,
@@ -246,9 +194,6 @@ impl GpuState {
                 text_atlas,
                 viewport,
                 swash_cache,
-                title_buffer,
-                subtitle_buffer,
-                config,
                 ..
             } = self;
 
@@ -259,36 +204,14 @@ impl GpuState {
                     font_system,
                     text_atlas,
                     viewport,
-                    [
-                        TextArea {
-                            buffer: title_buffer,
-                            left: title_left,
-                            top: title_top,
-                            scale: 1.0,
-                            bounds: TextBounds::default(),
-                            default_color: Color::rgb(255, 255, 255),
-                            custom_glyphs: &[],
-                        },
-                        TextArea {
-                            buffer: subtitle_buffer,
-                            left: subtitle_left,
-                            top: subtitle_top,
-                            scale: 1.0,
-                            bounds: TextBounds::default(),
-                            default_color: Color::rgb(180, 185, 200),
-                            custom_glyphs: &[],
-                        },
-                    ],
+                    text_areas,
                     swash_cache,
                 )
                 .context("falha ao preparar texto para GPU")?;
-
-            let _ = config; // evita warning de unused no destructure
         }
 
-        // Obter texture da surface
         let output = match self.surface.get_current_texture() {
-            Ok(texture) => texture,
+            Ok(t) => t,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                 self.surface.configure(&self.device, &self.config);
                 return Ok(());
@@ -331,7 +254,7 @@ impl GpuState {
             render_pass.set_pipeline(&self.pipeline);
             render_pass.draw(0..6, 0..1);
 
-            // 2. Texto sobre o gradiente (glyphon define sua propria pipeline internamente)
+            // 2. Todos os Labels sobre o gradiente
             self.text_renderer
                 .render(&self.text_atlas, &self.viewport, &mut render_pass)
                 .context("falha ao renderizar texto")?;
@@ -339,8 +262,6 @@ impl GpuState {
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
-
-        // Liberar glifos nao usados do atlas apos apresentar o frame
         self.text_atlas.trim();
 
         Ok(())
