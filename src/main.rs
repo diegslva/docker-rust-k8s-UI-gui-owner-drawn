@@ -1,12 +1,14 @@
 mod renderer;
+mod ui;
 
 use anyhow::{Context, Result};
 use renderer::GpuState;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 use tracing_subscriber::{EnvFilter, fmt};
+use ui::{Color, Label};
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalSize, PhysicalPosition};
+use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Icon, Window, WindowAttributes, WindowId};
@@ -16,9 +18,11 @@ const WINDOW_HEIGHT: f64 = 720.0;
 const ICON_BYTES: &[u8] = include_bytes!("../assets/icon_256x256.png");
 
 struct App {
-    // Arc e necessario para compartilhar a janela com GpuState (lifetime 'static da surface)
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
+    // Labels da tela — equivalente a ter TLabel declarados no Form do Delphi
+    title: Option<Label>,
+    subtitle: Option<Label>,
 }
 
 impl App {
@@ -26,6 +30,53 @@ impl App {
         Self {
             window: None,
             gpu: None,
+            title: None,
+            subtitle: None,
+        }
+    }
+
+    /// Cria os Labels e calcula posicao inicial com base no tamanho da janela.
+    /// Chamado apos GpuState estar pronto (FontSystem disponivel).
+    fn build_labels(&mut self, size: PhysicalSize<u32>) {
+        let Some(gpu) = &mut self.gpu else { return };
+        let w = size.width as f32;
+        let h = size.height as f32;
+
+        let fs = gpu.font_system_mut();
+
+        let mut title = Label::new_bold(fs, "docker-rust-k8s-ui-gui", 52.0, Color::WHITE, 0.0, 0.0);
+        title.x = (w - title.measured_width()) / 2.0;
+        title.y = h * 0.40;
+
+        let mut subtitle = Label::new(
+            fs,
+            "Phase 3 \u{00B7} Label como componente",
+            22.0,
+            Color::rgb(180, 185, 200),
+            0.0,
+            0.0,
+        );
+        subtitle.x = (w - subtitle.measured_width()) / 2.0;
+        subtitle.y = title.y + title.line_height() + 16.0;
+
+        self.title = Some(title);
+        self.subtitle = Some(subtitle);
+    }
+
+    /// Recalcula posicao dos Labels apos redimensionamento.
+    fn reposition_labels(&mut self, size: PhysicalSize<u32>) {
+        let w = size.width as f32;
+        let h = size.height as f32;
+
+        if let Some(title) = &mut self.title {
+            title.x = (w - title.measured_width()) / 2.0;
+            title.y = h * 0.40;
+        }
+        if let Some(subtitle) = &mut self.subtitle {
+            let title_top = self.title.as_ref().map_or(h * 0.40, |t| t.y);
+            let title_lh = self.title.as_ref().map_or(52.0 * 1.25, |t| t.line_height());
+            subtitle.x = (w - subtitle.measured_width()) / 2.0;
+            subtitle.y = title_top + title_lh + 16.0;
         }
     }
 }
@@ -80,7 +131,7 @@ impl ApplicationHandler for App {
         };
 
         let mut attributes = WindowAttributes::default()
-            .with_title("docker-rust-k8s-ui-gui [Phase 1]")
+            .with_title("docker-rust-k8s-ui-gui [Phase 3]")
             .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT));
 
         if let Some(icon) = icon {
@@ -103,7 +154,6 @@ impl ApplicationHandler for App {
 
         info!(window_id = ?window.id(), "janela criada com sucesso");
 
-        // Inicializar wgpu de forma sincrona usando block_on do pollster
         let gpu = match pollster::block_on(GpuState::new(Arc::clone(&window))) {
             Ok(state) => state,
             Err(err) => {
@@ -113,13 +163,16 @@ impl ApplicationHandler for App {
             }
         };
 
-        info!("pipeline wgpu inicializada com sucesso");
-
-        // Forcar primeiro frame imediatamente
-        window.request_redraw();
-
-        self.window = Some(window);
         self.gpu = Some(gpu);
+
+        // Labels criados apos GpuState (FontSystem necessario para shaping)
+        let size = window.inner_size();
+        self.build_labels(size);
+
+        info!("pipeline wgpu e labels inicializados com sucesso");
+
+        window.request_redraw();
+        self.window = Some(window);
     }
 
     fn window_event(
@@ -142,18 +195,23 @@ impl ApplicationHandler for App {
                 if let Some(gpu) = &mut self.gpu {
                     gpu.resize(new_size);
                 }
-                // Solicitar redraw apos resize para nao ficar frame em branco
+                self.reposition_labels(new_size);
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
             }
             WindowEvent::RedrawRequested => {
+                // Coletar refs dos labels existentes (campos distintos de gpu — borrow seguro)
+                let labels: Vec<&Label> = [self.title.as_ref(), self.subtitle.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+
                 if let Some(gpu) = &mut self.gpu {
-                    if let Err(err) = gpu.render() {
+                    if let Err(err) = gpu.render(&labels) {
                         warn!(error = %err, "erro durante render, pulando frame");
                     }
                 }
-                // Render continuo: solicita proximo frame
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -182,7 +240,6 @@ fn main() -> Result<()> {
     );
 
     let event_loop = EventLoop::new()?;
-    // Poll para render continuo — wgpu precisa do loop ativo
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = App::new();
