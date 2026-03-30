@@ -7,7 +7,7 @@ use neuroscan_core::TOP_CASES;
 use crate::app::App;
 use crate::app::infer::{InferMsg, InferProgress};
 use crate::app::state::{
-    AUTO_ROTATE_IDLE_S, AUTO_ROTATE_SPEED, ET_COLOR, NETC_COLOR, SNFH_COLOR,
+    AUTO_ROTATE_IDLE_S, AUTO_ROTATE_SPEED, ET_COLOR, INFER_FADE_DURATION, NETC_COLOR, SNFH_COLOR,
     SPLASH_FADEOUT_DURATION, TRANSITION_DURATION, TUMOR_COUNT,
 };
 use crate::renderer::{MeshEntry, Prim2DBatch};
@@ -135,9 +135,11 @@ impl App {
             let path_str = path.display().to_string();
             let out_dir = "assets/models/cases/BRATS_CUSTOM";
             info!(input = %path_str, outdir = %out_dir, "iniciando inferencia NeuroScan");
+            self.show_home = false;
             let rx = crate::app::infer::pipeline::launch(&path_str, out_dir);
             self.infer_rx = Some(rx);
             self.infer_active = true;
+            self.infer_fade = 0.0;
             self.infer_progress = Some(InferProgress::default());
             let sz = PhysicalSize::new(
                 self.gpu.as_ref().map_or(1280, |g| g.config.width),
@@ -166,11 +168,10 @@ impl App {
         }
 
         // ── Conclusão da inferência ─────────────────────────────────
+        // Ao receber Done(true): carrega meshes e inicia fade suave.
+        // NÃO desliga infer_active imediatamente — o fade cuida disso.
         if let Some(ok) = infer_done {
             self.infer_rx = None;
-            self.infer_active = false;
-            self.infer_progress = None;
-            self.infer_labels.clear();
             if ok {
                 let device = self.gpu.as_ref().unwrap().device.clone();
                 let out_dir = "assets/models/cases/BRATS_CUSTOM";
@@ -211,35 +212,133 @@ impl App {
                 self.build_labels(sz);
                 self.update_snfh_label_positions(sz);
                 self.rebuild_menu_labels(sz);
-                info!("caso inferido carregado com sucesso");
+                // Inicia fade suave — infer_active permanece true durante o fade
+                self.infer_fade = 0.01;
+                info!("caso inferido carregado — iniciando fade para 3D");
             } else {
-                warn!("inferencia Python falhou ou foi cancelada");
+                // Falha: volta para home screen
+                self.infer_active = false;
+                self.infer_progress = None;
+                self.infer_labels.clear();
+                self.infer_fade = 0.0;
+                self.show_home = true;
+                warn!("inferencia Python falhou — retornando a home screen");
             }
         }
 
-        // ── Tela de inferência: anim_t tick + render dedicado ──────
+        // ── Tela de inferência / fade para 3D ──────────────────────
         if self.infer_active {
-            if let Some(p) = &mut self.infer_progress {
-                p.anim_t += dt;
-                p.elapsed_secs += dt;
-            }
-            self.spinner_angle += dt * std::f32::consts::TAU * 0.75;
-
             let sz = PhysicalSize::new(
                 self.gpu.as_ref().map_or(1280, |g| g.config.width),
                 self.gpu.as_ref().map_or(720, |g| g.config.height),
             );
             let sw = sz.width as f32;
             let sh = sz.height as f32;
-            // Reconstrói labels de inferência a cada frame (counter de fatia muda rápido)
-            self.build_infer_labels(sz);
-            let prims = self.build_infer_primitives(sw, sh);
-            let label_refs: Vec<&Label> = self.infer_labels.iter().collect();
+            let cam = self.camera.build_uniform(sz.width, sz.height);
+
+            if self.infer_fade > 0.0 {
+                // ── FADE: cena 3D emergindo por baixo de overlay escuro ──
+                self.infer_fade += dt / INFER_FADE_DURATION;
+                if self.infer_fade >= 1.0 {
+                    // Fade completo — transição concluída
+                    self.infer_active = false;
+                    self.infer_fade = 0.0;
+                    self.infer_progress = None;
+                    self.infer_labels.clear();
+                    info!("fade inferencia->3D concluido");
+                } else {
+                    // Renderiza cena 3D com overlay escuro que dissolve
+                    let fade_alpha = (1.0 - self.infer_fade).max(0.0);
+                    let prims = self.build_primitives(
+                        &cam.mvp,
+                        sw,
+                        sh,
+                        self.pulse_t,
+                        0.0,
+                        self.spinner_angle,
+                        false,
+                    );
+                    let mut overlay_prims = self.build_menu_overlay(sw, sh);
+                    // Overlay de fade: retângulo escuro que dissolve sobre a cena 3D
+                    overlay_prims.rect(0.0, 0.0, sw, sh, [0.03, 0.04, 0.08, fade_alpha], sw, sh);
+                    let mut label_refs: Vec<&Label> = self.labels_always.iter().collect();
+                    label_refs.extend(self.labels_snfh.iter());
+                    let overlay_label_refs: Vec<&Label> = self.labels_menu_bar.iter().collect();
+                    if let Some(gpu) = &mut self.gpu {
+                        let entries: Vec<MeshEntry> = self
+                            .meshes
+                            .iter()
+                            .map(|m| MeshEntry {
+                                mesh: &m.mesh,
+                                tint: m.tint,
+                                alpha: m.alpha,
+                            })
+                            .collect();
+                        if let Err(e) = gpu.render(
+                            &cam,
+                            &entries,
+                            &label_refs,
+                            &prims,
+                            &overlay_prims,
+                            &overlay_label_refs,
+                        ) {
+                            warn!(error = %e, "erro render fade inferencia->3D");
+                        }
+                    }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                    return;
+                }
+            } else {
+                // ── INFERÊNCIA EM ANDAMENTO: tela dedicada ──
+                if let Some(p) = &mut self.infer_progress {
+                    p.anim_t += dt;
+                    p.elapsed_secs += dt;
+                }
+                self.spinner_angle += dt * std::f32::consts::TAU * 0.75;
+                self.build_infer_labels(sz);
+                let prims = self.build_infer_primitives(sw, sh);
+                let label_refs: Vec<&Label> = self.infer_labels.iter().collect();
+                if let Some(gpu) = &mut self.gpu {
+                    let empty_overlay = Prim2DBatch::new();
+                    if let Err(e) = gpu.render(&cam, &[], &label_refs, &prims, &empty_overlay, &[])
+                    {
+                        warn!(error = %e, "erro render tela inferencia");
+                    }
+                }
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+        }
+
+        // ── HOME SCREEN: tela inicial antes de qualquer inferência ──
+        if self.show_home {
+            self.home_anim_t += dt;
+            let sz = PhysicalSize::new(
+                self.gpu.as_ref().map_or(1280, |g| g.config.width),
+                self.gpu.as_ref().map_or(720, |g| g.config.height),
+            );
+            let sw = sz.width as f32;
+            let sh = sz.height as f32;
+            self.build_home_labels(sz);
+            let prims = self.build_home_primitives(sw, sh);
+            let label_refs: Vec<&Label> = self.home_labels.iter().collect();
+            let overlay_prims = self.build_menu_overlay(sw, sh);
+            let overlay_label_refs: Vec<&Label> = self.labels_menu_bar.iter().collect();
             let cam = self.camera.build_uniform(sz.width, sz.height);
             if let Some(gpu) = &mut self.gpu {
-                let empty_overlay = Prim2DBatch::new();
-                if let Err(e) = gpu.render(&cam, &[], &label_refs, &prims, &empty_overlay, &[]) {
-                    warn!(error = %e, "erro render tela inferencia");
+                if let Err(e) = gpu.render(
+                    &cam,
+                    &[],
+                    &label_refs,
+                    &prims,
+                    &overlay_prims,
+                    &overlay_label_refs,
+                ) {
+                    warn!(error = %e, "erro render home screen");
                 }
             }
             if let Some(w) = &self.window {
