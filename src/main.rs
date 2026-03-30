@@ -7,64 +7,13 @@ use anyhow::{Context, Result};
 use camera::OrbitalCamera;
 use glam::{Mat4, Vec4};
 use mesh::Mesh;
+use neuroscan_core::{ScanMeta, TOP_CASES, CASES_DIR};
 use renderer::{GpuState, MeshEntry, Prim2DBatch};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 use tracing_subscriber::{EnvFilter, fmt};
 use ui::{Color, Label};
-
-// ---------------------------------------------------------------------------
-// Casos clínicos disponíveis — top 10 por volume tumoral (BraTS 2021)
-// ---------------------------------------------------------------------------
-
-const TOP_CASES: &[&str] = &[
-    "BRATS_249", "BRATS_141", "BRATS_206", "BRATS_223", "BRATS_155",
-    "BRATS_285", "BRATS_020", "BRATS_088", "BRATS_022", "BRATS_117",
-];
-
-const CASES_DIR: &str = "assets/models/cases";
-
-// ---------------------------------------------------------------------------
-// Metadados do scan
-// ---------------------------------------------------------------------------
-
-#[derive(Default, Clone)]
-struct ScanMeta {
-    case_id:         String,
-    dataset:         String,
-    modalities:      String,
-    et_volume_ml:    f32,
-    snfh_volume_ml:  f32,
-    netc_volume_ml:  f32,
-    total_volume_ml: f32,
-}
-
-impl ScanMeta {
-    fn load(path: &str) -> Self {
-        let text = match std::fs::read_to_string(path) {
-            Ok(t)  => t,
-            Err(_) => return Self::default(),
-        };
-        let v: serde_json::Value = match serde_json::from_str(&text) {
-            Ok(v)  => v,
-            Err(_) => return Self::default(),
-        };
-        Self {
-            case_id:         v["case_id"].as_str().unwrap_or("").to_string(),
-            dataset:         v["dataset"].as_str().unwrap_or("").to_string(),
-            modalities:      v["modalities"].as_str().unwrap_or("").to_string(),
-            et_volume_ml:    v["et_volume_ml"].as_f64().unwrap_or(0.0) as f32,
-            snfh_volume_ml:  v["snfh_volume_ml"].as_f64().unwrap_or(0.0) as f32,
-            netc_volume_ml:  v["netc_volume_ml"].as_f64().unwrap_or(0.0) as f32,
-            total_volume_ml: v["total_volume_ml"].as_f64().unwrap_or(0.0) as f32,
-        }
-    }
-
-    fn case_path(case_id: &str) -> String {
-        format!("{}/{}/scan_meta.json", CASES_DIR, case_id)
-    }
-}
 
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
@@ -409,46 +358,12 @@ impl App {
 
     /// Retorna as entradas do menu `menu_id` como (texto, shortcut_hint, is_separator).
     fn build_menu_entries(&self, menu_id: i32) -> Vec<(String, String, bool)> {
-        match menu_id {
-            0 => vec![
-                ("Abrir Volume NIfTI...".into(), "O".into(), false),
-                (String::new(), String::new(), true),
-                ("Sair".into(), String::new(), false),
-            ],
-            1 => {
-                let mut v: Vec<(String, String, bool)> = vec![
-                    ("Caso Anterior".into(), "\u{2190}".into(), false),
-                    ("Proximo Caso".into(),  "\u{2192}".into(), false),
-                    (String::new(), String::new(), true),
-                ];
-                for (i, id) in TOP_CASES.iter().enumerate() {
-                    let label = if i == self.current_case {
-                        format!("\u{2713}  {}", id)
-                    } else {
-                        format!("    {}", id)
-                    };
-                    v.push((label, String::new(), false));
-                }
-                v
-            },
-            2 => vec![
-                (format!("NeuroScan  v{}", env!("CARGO_PKG_VERSION")), String::new(), false),
-                ("nnUNet 2D  \u{00B7}  BraTS 2021".into(), String::new(), false),
-                ("Dice 0.865".into(), String::new(), false),
-                (String::new(), String::new(), true),
-                ("Diego L. Silva  \u{00B7}  github.com/diegslva".into(), String::new(), false),
-            ],
-            _ => vec![],
-        }
+        neuroscan_core::menu_entries(menu_id, self.current_case, env!("CARGO_PKG_VERSION"))
     }
 
     /// Altura total do dropdown para o menu `menu_id`.
     fn dropdown_height(&self, menu_id: i32) -> f32 {
-        self.build_menu_entries(menu_id)
-            .iter()
-            .map(|(_, _, sep)| if *sep { MENU_SEP_H } else { MENU_ITEM_H })
-            .sum::<f32>()
-            + 4.0  // padding vertical
+        neuroscan_core::dropdown_height(menu_id, self.current_case)
     }
 
     /// Constrói `labels_menu` para o dropdown do menu atualmente aberto.

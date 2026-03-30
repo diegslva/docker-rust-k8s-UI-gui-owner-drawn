@@ -8,6 +8,17 @@ repository = "https://github.com/diegslva/docker-rust-k8s-UI-gui-owner-drawn"
 license = "MIT"
 rust-version = "1.85"
 
+[[bin]]
+name = "neuroscan"
+path = "src/main.rs"
+
+[lib]
+name = "neuroscan_core"
+path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = "3"
+
 [dependencies]
 winit = "0.30"
 tracing = "0.1"
