@@ -1,6 +1,7 @@
 use neuroscan_core::{MENU_BAR_H, MENU_DROP_W, MENU_ITEM_H, MENU_SEP_H, MENU_TOP_WS, MENU_TOP_XS};
 
 use crate::app::App;
+use crate::app::infer::InferPhase;
 use crate::renderer::Prim2DBatch;
 
 use super::super::projection::project_to_screen;
@@ -377,6 +378,240 @@ impl App {
                 );
             }
         }
+
+        b
+    }
+
+    /// Tela de inferência: fundo escuro, scan-lines animadas, barra de progresso,
+    /// barras de volume por classe e esboço pulsante do cérebro.
+    pub(crate) fn build_infer_primitives(&self, w: f32, h: f32) -> Prim2DBatch {
+        let mut b = Prim2DBatch::new();
+
+        let Some(progress) = &self.infer_progress else {
+            // Sem progresso disponível: tela mínima de espera
+            b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, 1.0], w, h);
+            return b;
+        };
+
+        let anim_t = progress.anim_t;
+        let cx = w / 2.0;
+        let cy = h / 2.0;
+
+        // ── Fundo escuro ────────────────────────────────────────────
+        b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, 1.0], w, h);
+
+        // ── Scan-lines animadas (três velocidades diferentes) ───────
+        let scan_speeds = [0.18_f32, 0.27, 0.11];
+        let scan_alphas = [0.07_f32, 0.05, 0.04];
+        for (i, (&speed, &alpha)) in scan_speeds.iter().zip(scan_alphas.iter()).enumerate() {
+            let offset = i as f32 * (h / 3.0);
+            let y = ((anim_t * speed + offset / h).fract() * h).clamp(0.0, h - 1.5);
+            b.rect(0.0, y - 1.0, w, 2.5, [0.30, 0.58, 0.88, alpha], w, h);
+            b.rect(
+                w * 0.20,
+                y - 0.5,
+                w * 0.60,
+                1.0,
+                [0.50, 0.75, 1.0, alpha * 1.5],
+                w,
+                h,
+            );
+        }
+
+        // ── Esboço circular pulsante do cérebro (centro) ────────────
+        let base_r = 62.0_f32;
+        let pulse_r = base_r + 12.0 * (anim_t * 2.0).sin().abs();
+        let ring_n = 48_usize;
+        for j in 0..ring_n {
+            let a0 = (j as f32 / ring_n as f32) * std::f32::consts::TAU;
+            let a1 = ((j + 1) as f32 / ring_n as f32) * std::f32::consts::TAU;
+            b.line(
+                cx + pulse_r * a0.cos(),
+                cy + pulse_r * a0.sin(),
+                cx + pulse_r * a1.cos(),
+                cy + pulse_r * a1.sin(),
+                [0.15, 0.35, 0.65, 0.22],
+                1.2,
+                w,
+                h,
+            );
+        }
+        // Segundo anel interno mais brilhante
+        let inner_r = pulse_r * 0.70;
+        for j in 0..32_usize {
+            let a0 = (j as f32 / 32.0) * std::f32::consts::TAU;
+            let a1 = ((j + 1) as f32 / 32.0) * std::f32::consts::TAU;
+            b.line(
+                cx + inner_r * a0.cos(),
+                cy + inner_r * a0.sin(),
+                cx + inner_r * a1.cos(),
+                cy + inner_r * a1.sin(),
+                [0.18, 0.42, 0.75, 0.14],
+                1.0,
+                w,
+                h,
+            );
+        }
+
+        // ── Spinner orbital (arco com cauda) ────────────────────────
+        let orbit_r = pulse_r + 18.0;
+        let arc_span = std::f32::consts::TAU * (260.0 / 360.0);
+        let tail_a = self.spinner_angle - arc_span;
+        for j in 0..36_usize {
+            let t0 = j as f32 / 36.0;
+            let t1 = (j + 1) as f32 / 36.0;
+            let a0 = tail_a + t0 * arc_span;
+            let a1 = tail_a + t1 * arc_span;
+            let br = t0.powf(1.3);
+            b.line(
+                cx + orbit_r * a0.cos(),
+                cy + orbit_r * a0.sin(),
+                cx + orbit_r * a1.cos(),
+                cy + orbit_r * a1.sin(),
+                [0.42 + 0.22 * br, 0.65 + 0.16 * br, 1.0, br * 0.80],
+                2.0,
+                w,
+                h,
+            );
+        }
+        // Ponto brilhante na cabeça do arco
+        let hx = cx + orbit_r * self.spinner_angle.cos();
+        let hy = cy + orbit_r * self.spinner_angle.sin();
+        let hr = 2.8_f32;
+        b.rect(
+            hx - hr,
+            hy - hr,
+            hr * 2.0,
+            hr * 2.0,
+            [0.70, 0.90, 1.0, 0.92],
+            w,
+            h,
+        );
+
+        // ── Linha varrendo fatias (sweep line) ──────────────────────
+        if progress.total_slices > 0 {
+            let frac = progress.current_slice as f32 / progress.total_slices as f32;
+            let sweep_area_top = h * 0.18;
+            let sweep_area_h = h * 0.60;
+            let sweep_y = (sweep_area_top + frac * sweep_area_h)
+                .clamp(sweep_area_top, sweep_area_top + sweep_area_h);
+            b.rect(
+                w * 0.10,
+                sweep_y - 0.5,
+                w * 0.80,
+                1.5,
+                [0.20, 0.65, 0.95, 0.30],
+                w,
+                h,
+            );
+        }
+
+        // ── Barra de progresso principal ────────────────────────────
+        let bar_y = h * 0.82;
+        let bar_h = 6.0_f32;
+        let bar_x = w * 0.12;
+        let bar_w = w * 0.76;
+
+        // Fundo da barra
+        b.rect(bar_x, bar_y, bar_w, bar_h, [0.08, 0.12, 0.22, 0.80], w, h);
+
+        // Preenchimento proporcional ao progresso
+        let frac = if progress.total_slices > 0 {
+            // Durante slicing: baseado em fatias.  Demais fases: estimativa fixa.
+            match &progress.phase {
+                InferPhase::Preprocessing => 0.02,
+                InferPhase::Slicing => {
+                    0.05 + 0.80 * (progress.current_slice as f32 / progress.total_slices as f32)
+                }
+                InferPhase::MarchingCubes => 0.90,
+                InferPhase::Done => 1.0,
+                InferPhase::Error(_) => 0.0,
+            }
+        } else {
+            0.0
+        };
+
+        if frac > 0.0 {
+            let fill_w = (bar_w * frac).max(bar_h); // mínimo = altura para parecer um ponto
+            // Glow atrás do fill
+            b.rect(
+                bar_x,
+                bar_y - 1.5,
+                fill_w,
+                bar_h + 3.0,
+                [0.20, 0.65, 0.95, 0.12],
+                w,
+                h,
+            );
+            // Fill principal
+            b.rect(bar_x, bar_y, fill_w, bar_h, [0.20, 0.65, 0.95, 0.90], w, h);
+        }
+
+        // ── Barras de volume por classe (coluna esquerda) ─────────────
+        let vol_x = w * 0.05;
+        let vol_bar_y_start = h * 0.55;
+        let vol_bar_h = 5.0_f32;
+        let vol_bar_max_w = w * 0.20;
+        let vol_row_gap = 22.0_f32;
+        // Referência: 30 mL = 100% da barra
+        let vol_max_ref = 30.0_f32;
+
+        let class_data: &[([f32; 3], f32)] = &[
+            (ET_COLOR, progress.et_volume_ml),
+            (SNFH_COLOR, progress.snfh_volume_ml),
+            (NETC_COLOR, progress.netc_volume_ml),
+        ];
+
+        for (i, (rgb, vol)) in class_data.iter().enumerate() {
+            let vy = vol_bar_y_start + i as f32 * vol_row_gap;
+            // Trilha da barra
+            b.rect(
+                vol_x,
+                vy,
+                vol_bar_max_w,
+                vol_bar_h,
+                [0.08, 0.12, 0.22, 0.55],
+                w,
+                h,
+            );
+            // Preenchimento
+            if *vol > 0.0 {
+                let fill = (vol / vol_max_ref).min(1.0) * vol_bar_max_w;
+                b.rect(
+                    vol_x,
+                    vy,
+                    fill.max(vol_bar_h),
+                    vol_bar_h,
+                    [rgb[0], rgb[1], rgb[2], 0.85],
+                    w,
+                    h,
+                );
+            }
+        }
+
+        // ── Painel de fase (canto superior direito) ──────────────────
+        let phase_box_w = 200.0_f32;
+        let phase_box_h = 36.0_f32;
+        let phase_box_x = w - phase_box_w - 20.0;
+        let phase_box_y = h * 0.12;
+        b.rect(
+            phase_box_x,
+            phase_box_y,
+            phase_box_w,
+            phase_box_h,
+            [0.04, 0.07, 0.14, 0.88],
+            w,
+            h,
+        );
+        b.rect(
+            phase_box_x,
+            phase_box_y,
+            phase_box_w,
+            2.0,
+            [0.20, 0.55, 0.90, 0.70],
+            w,
+            h,
+        );
 
         b
     }

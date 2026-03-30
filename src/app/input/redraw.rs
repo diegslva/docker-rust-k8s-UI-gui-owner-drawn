@@ -5,6 +5,7 @@ use winit::event_loop::ActiveEventLoop;
 use neuroscan_core::TOP_CASES;
 
 use crate::app::App;
+use crate::app::infer::{InferMsg, InferProgress};
 use crate::app::state::{
     AUTO_ROTATE_IDLE_S, AUTO_ROTATE_SPEED, ET_COLOR, NETC_COLOR, SNFH_COLOR,
     SPLASH_FADEOUT_DURATION, TRANSITION_DURATION, TUMOR_COUNT,
@@ -132,109 +133,137 @@ impl App {
 
         if let Some(path) = picked_path {
             let path_str = path.display().to_string();
-            let out_dir = "assets/models/infer".to_string();
-            let device_bg = self.gpu.as_ref().unwrap().device.clone();
-            let (tx, rx) = std::sync::mpsc::channel::<bool>();
-            let out_clone = out_dir.clone();
-            std::thread::spawn(move || {
-                info!(input = %path_str, "iniciando inferencia Python");
-                let status = std::process::Command::new("python")
-                    .args([
-                        "scripts/ml/infer_single.py",
-                        "--input",
-                        &path_str,
-                        "--output-dir",
-                        &out_clone,
-                        "--model",
-                        "assets/models/onnx/nnunet_brats_4ch.onnx",
-                        "--meta",
-                        "assets/models/brain_meta.json",
-                    ])
-                    .status();
-                let ok = matches!(status, Ok(s) if s.success());
-                if ok {
-                    let defs = [
-                        (format!("{}/tumor_et.obj", out_clone), ET_COLOR, 1.0_f32),
-                        (format!("{}/tumor_snfh.obj", out_clone), SNFH_COLOR, 1.0_f32),
-                        (format!("{}/tumor_netc.obj", out_clone), NETC_COLOR, 1.0_f32),
-                    ];
-                    // Pre-load on this thread; meshes not sent over channel (wgpu Buffer
-                    // is not Send across all platforms). Signal ok=true; main thread reloads.
-                    let _meshes: Vec<crate::app::state::LoadedMesh> = defs
-                        .iter()
-                        .filter_map(|(p, t, a)| {
-                            crate::mesh::Mesh::from_obj(&device_bg, p).ok().map(|m| {
-                                crate::app::state::LoadedMesh {
-                                    mesh: m,
-                                    tint: *t,
-                                    alpha: *a,
-                                }
-                            })
-                        })
-                        .collect();
-                }
-                let _ = tx.send(ok);
-            });
+            let out_dir = "assets/models/cases/BRATS_CUSTOM";
+            info!(input = %path_str, outdir = %out_dir, "iniciando inferencia NeuroScan");
+            let rx = crate::app::infer::pipeline::launch(&path_str, out_dir);
             self.infer_rx = Some(rx);
             self.infer_active = true;
-            info!("inferencia iniciada");
+            self.infer_progress = Some(InferProgress::default());
+            let sz = PhysicalSize::new(
+                self.gpu.as_ref().map_or(1280, |g| g.config.width),
+                self.gpu.as_ref().map_or(720, |g| g.config.height),
+            );
+            self.build_infer_labels(sz);
         }
 
-        // ── Inferência: checar conclusão ────────────────────────────
+        // ── Inferência: drena todas as mensagens pendentes do canal ────
+        let mut infer_done: Option<bool> = None;
         if let Some(rx) = &self.infer_rx {
-            if let Ok(ok) = rx.try_recv() {
-                self.infer_rx = None;
-                self.infer_active = false;
-                if ok {
-                    let device = self.gpu.as_ref().unwrap().device.clone();
-                    let out_dir = "assets/models/infer";
-                    let defs = [
-                        (format!("{}/tumor_et.obj", out_dir), ET_COLOR, 1.0_f32),
-                        (format!("{}/tumor_snfh.obj", out_dir), SNFH_COLOR, 1.0_f32),
-                        (format!("{}/tumor_netc.obj", out_dir), NETC_COLOR, 1.0_f32),
-                    ];
-                    let new_meshes: Vec<crate::app::state::LoadedMesh> = defs
-                        .iter()
-                        .filter_map(|(p, t, a)| {
-                            crate::mesh::Mesh::from_obj(&device, p).ok().map(|m| {
-                                crate::app::state::LoadedMesh {
-                                    mesh: m,
-                                    tint: *t,
-                                    alpha: *a,
-                                }
-                            })
-                        })
-                        .collect();
-                    for (i, lm) in new_meshes.into_iter().enumerate() {
-                        if i < self.meshes.len() {
-                            self.meshes[i] = lm;
+            loop {
+                match rx.try_recv() {
+                    Ok(InferMsg::Slice { current, total }) => {
+                        if let Some(p) = &mut self.infer_progress {
+                            p.current_slice = current;
+                            if total > 0 {
+                                p.total_slices = total;
+                            }
                         }
                     }
-                    for i in 0..TUMOR_COUNT {
-                        self.centroids[i] = self
-                            .meshes
-                            .get(i)
-                            .map_or(glam::Vec3::ZERO, |m| m.mesh.centroid);
+                    Ok(InferMsg::PartialVolume { class, volume_ml }) => {
+                        if let Some(p) = &mut self.infer_progress {
+                            match class {
+                                1 => p.et_volume_ml = volume_ml,
+                                2 => p.snfh_volume_ml = volume_ml,
+                                3 => p.netc_volume_ml = volume_ml,
+                                _ => {}
+                            }
+                        }
                     }
-                    let infer_meta = format!("{}/scan_meta.json", out_dir);
-                    self.scan = neuroscan_core::ScanMeta::load(&infer_meta);
-                    let sz = PhysicalSize::new(
-                        self.gpu.as_ref().map_or(1280, |g| g.config.width),
-                        self.gpu.as_ref().map_or(720, |g| g.config.height),
-                    );
-                    self.build_labels(sz);
-                    self.update_snfh_label_positions(sz);
-                    self.rebuild_menu_labels(sz);
-                    info!("caso inferido carregado com sucesso");
-                } else {
-                    warn!("inferencia Python falhou ou foi cancelada");
+                    Ok(InferMsg::Phase(phase)) => {
+                        if let Some(p) = &mut self.infer_progress {
+                            p.phase = phase;
+                        }
+                    }
+                    Ok(InferMsg::Done(ok)) => {
+                        infer_done = Some(ok);
+                        break;
+                    }
+                    Err(_) => break,
                 }
             }
         }
 
-        // ── Spinner de inferência ──
+        // ── Conclusão da inferência ─────────────────────────────────
+        if let Some(ok) = infer_done {
+            self.infer_rx = None;
+            self.infer_active = false;
+            self.infer_progress = None;
+            self.infer_labels.clear();
+            if ok {
+                let device = self.gpu.as_ref().unwrap().device.clone();
+                let out_dir = "assets/models/cases/BRATS_CUSTOM";
+                let defs = [
+                    (format!("{}/tumor_et.obj", out_dir), ET_COLOR, 1.0_f32),
+                    (format!("{}/tumor_snfh.obj", out_dir), SNFH_COLOR, 1.0_f32),
+                    (format!("{}/tumor_netc.obj", out_dir), NETC_COLOR, 1.0_f32),
+                ];
+                let new_meshes: Vec<crate::app::state::LoadedMesh> = defs
+                    .iter()
+                    .filter_map(|(p, t, a)| {
+                        crate::mesh::Mesh::from_obj(&device, p).ok().map(|m| {
+                            crate::app::state::LoadedMesh {
+                                mesh: m,
+                                tint: *t,
+                                alpha: *a,
+                            }
+                        })
+                    })
+                    .collect();
+                for (i, lm) in new_meshes.into_iter().enumerate() {
+                    if i < self.meshes.len() {
+                        self.meshes[i] = lm;
+                    }
+                }
+                for i in 0..TUMOR_COUNT {
+                    self.centroids[i] = self
+                        .meshes
+                        .get(i)
+                        .map_or(glam::Vec3::ZERO, |m| m.mesh.centroid);
+                }
+                let infer_meta = format!("{}/scan_meta.json", out_dir);
+                self.scan = neuroscan_core::ScanMeta::load(&infer_meta);
+                let sz = PhysicalSize::new(
+                    self.gpu.as_ref().map_or(1280, |g| g.config.width),
+                    self.gpu.as_ref().map_or(720, |g| g.config.height),
+                );
+                self.build_labels(sz);
+                self.update_snfh_label_positions(sz);
+                self.rebuild_menu_labels(sz);
+                info!("caso inferido carregado com sucesso");
+            } else {
+                warn!("inferencia Python falhou ou foi cancelada");
+            }
+        }
+
+        // ── Tela de inferência: anim_t tick + render dedicado ──────
         if self.infer_active {
+            if let Some(p) = &mut self.infer_progress {
+                p.anim_t += dt;
+                p.elapsed_secs += dt;
+            }
             self.spinner_angle += dt * std::f32::consts::TAU * 0.75;
+
+            let sz = PhysicalSize::new(
+                self.gpu.as_ref().map_or(1280, |g| g.config.width),
+                self.gpu.as_ref().map_or(720, |g| g.config.height),
+            );
+            let sw = sz.width as f32;
+            let sh = sz.height as f32;
+            // Reconstrói labels de inferência a cada frame (counter de fatia muda rápido)
+            self.build_infer_labels(sz);
+            let prims = self.build_infer_primitives(sw, sh);
+            let label_refs: Vec<&Label> = self.infer_labels.iter().collect();
+            let cam = self.camera.build_uniform(sz.width, sz.height);
+            if let Some(gpu) = &mut self.gpu {
+                let empty_overlay = Prim2DBatch::new();
+                if let Err(e) = gpu.render(&cam, &[], &label_refs, &prims, &empty_overlay, &[]) {
+                    warn!(error = %e, "erro render tela inferencia");
+                }
+            }
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            return;
         }
 
         // ── Rotação automática após inatividade ──
@@ -323,9 +352,9 @@ impl App {
         }
 
         let cam = self.camera.build_uniform(size.width, size.height);
-        let infer = self.infer_active;
         let sw = size.width as f32;
         let sh = size.height as f32;
+        // infer_active is always false here — active inference returns early above
         let prims = self.build_primitives(
             &cam.mvp,
             sw,
@@ -333,7 +362,7 @@ impl App {
             self.pulse_t,
             self.transition_phase,
             self.spinner_angle,
-            infer,
+            false,
         );
         let overlay_prims = self.build_menu_overlay(sw, sh);
 
