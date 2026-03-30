@@ -107,6 +107,15 @@ const TRANSITION_DURATION:    f32 = 0.45; // segundos para dissolve entre casos
 const PULSE_FREQ:              f32 = 1.2;  // Hz do pulso nos pontos de ancoragem
 const SPLASH_FADEOUT_DURATION: f32 = 0.70; // segundos para fade-out da splash
 
+// --- Menu bar owner-drawn ---
+const MENU_BAR_H:  f32 = 26.0;
+const MENU_ITEM_H: f32 = 22.0;
+const MENU_SEP_H:  f32 = 9.0;
+const MENU_DROP_W: f32 = 220.0;
+/// X de início e largura de cada item da barra: Arquivo | Casos | Sobre
+const MENU_TOP_XS: [f32; 3] = [8.0, 78.0, 140.0];
+const MENU_TOP_WS: [f32; 3] = [68.0, 58.0, 58.0];
+
 /// Meshes permanentes do cérebro (compartilhadas entre todos os casos)
 const BRAIN_DEFS: &[(&str, [f32; 3], f32)] = &[
     (concat!("assets/models/premium/", "Ventricles.obj"),                       VENTR_COLOR, VENTR_ALPHA),
@@ -141,7 +150,13 @@ struct App {
     centroids:           [glam::Vec3; TUMOR_COUNT],
     labels_always:       Vec<Label>,
     labels_panel:        Vec<Label>,
+    labels_snfh:         Vec<Label>,  // callout SNFH — posição mutada diretamente (sem re-shaping)
+    labels_menu:         Vec<Label>,  // dropdown do menu ativo
     show_panel:          bool,
+    // Menu bar
+    menu_open:           i32,  // -1 = fechado; 0=Arquivo, 1=Casos, 2=Sobre
+    menu_hover_top:      i32,  // -1=nenhum, 0..2 = top-item sob cursor
+    menu_hover_item:     i32,  // -1=nenhum, índice no dropdown atual
     scan:                ScanMeta,
     // Janela
     window_shown:  bool,
@@ -177,9 +192,14 @@ impl App {
             window: None, gpu: None, meshes: Vec::new(),
             camera: OrbitalCamera::new(4.0),
             centroids: [glam::Vec3::ZERO; TUMOR_COUNT],
-            labels_always: Vec::new(),
-            labels_panel:  Vec::new(),
-            show_panel:    false,
+            labels_always:   Vec::new(),
+            labels_panel:    Vec::new(),
+            labels_snfh:     Vec::new(),
+            labels_menu:     Vec::new(),
+            show_panel:      false,
+            menu_open:       -1,
+            menu_hover_top:  -1,
+            menu_hover_item: -1,
             scan:          ScanMeta::default(),
             window_shown:  false,
             splash_done:   false,
@@ -383,6 +403,118 @@ impl App {
         b
     }
 
+    // -----------------------------------------------------------------------
+    // Menu bar — entradas, rebuild de labels do dropdown, posições SNFH
+    // -----------------------------------------------------------------------
+
+    /// Retorna as entradas do menu `menu_id` como (texto, shortcut_hint, is_separator).
+    fn build_menu_entries(&self, menu_id: i32) -> Vec<(String, String, bool)> {
+        match menu_id {
+            0 => vec![
+                ("Abrir Volume NIfTI...".into(), "O".into(), false),
+                (String::new(), String::new(), true),
+                ("Sair".into(), String::new(), false),
+            ],
+            1 => {
+                let mut v: Vec<(String, String, bool)> = vec![
+                    ("Caso Anterior".into(), "\u{2190}".into(), false),
+                    ("Proximo Caso".into(),  "\u{2192}".into(), false),
+                    (String::new(), String::new(), true),
+                ];
+                for (i, id) in TOP_CASES.iter().enumerate() {
+                    let label = if i == self.current_case {
+                        format!("\u{2713}  {}", id)
+                    } else {
+                        format!("    {}", id)
+                    };
+                    v.push((label, String::new(), false));
+                }
+                v
+            },
+            2 => vec![
+                (format!("NeuroScan  v{}", env!("CARGO_PKG_VERSION")), String::new(), false),
+                ("nnUNet 2D  \u{00B7}  BraTS 2021".into(), String::new(), false),
+                ("Dice 0.865".into(), String::new(), false),
+                (String::new(), String::new(), true),
+                ("Diego L. Silva  \u{00B7}  github.com/diegslva".into(), String::new(), false),
+            ],
+            _ => vec![],
+        }
+    }
+
+    /// Altura total do dropdown para o menu `menu_id`.
+    fn dropdown_height(&self, menu_id: i32) -> f32 {
+        self.build_menu_entries(menu_id)
+            .iter()
+            .map(|(_, _, sep)| if *sep { MENU_SEP_H } else { MENU_ITEM_H })
+            .sum::<f32>()
+            + 4.0  // padding vertical
+    }
+
+    /// Constrói `labels_menu` para o dropdown do menu atualmente aberto.
+    /// Chamado quando `menu_open` muda.
+    fn rebuild_menu_labels(&mut self, size: PhysicalSize<u32>) {
+        if self.menu_open < 0 {
+            self.labels_menu = Vec::new();
+            return;
+        }
+        let menu_id = self.menu_open;
+        let entries  = self.build_menu_entries(menu_id);
+        let top_x    = MENU_TOP_XS[menu_id as usize];
+        let text_x   = top_x + 12.0;
+        let right_x  = top_x + MENU_DROP_W - 14.0;
+        let w = size.width as f32;
+        let h = size.height as f32;
+
+        let Some(gpu) = &mut self.gpu else { return };
+        let fs = gpu.font_system_mut();
+        let col_item  = Color::rgb(188, 200, 218);
+        let col_sc    = Color::rgb(100, 116, 139);
+        // ✓ item (current case) em verde suave
+        let col_check = Color::rgb(100, 200, 140);
+
+        let mut labels = Vec::new();
+        let mut y = MENU_BAR_H + 2.0;
+
+        for (label, shortcut, is_sep) in &entries {
+            if *is_sep { y += MENU_SEP_H; continue; }
+            let col = if label.starts_with('\u{2713}') { col_check } else { col_item };
+            labels.push(Label::new(fs, label, 11.0, col, text_x, y + 4.0));
+            if !shortcut.is_empty() {
+                let mut sc = Label::new(fs, shortcut, 11.0, col_sc, 0.0, y + 4.0);
+                sc.x = right_x - sc.measured_width();
+                labels.push(sc);
+            }
+            y += MENU_ITEM_H;
+        }
+        let _ = (w, h); // apenas evita warnings de unused
+        self.labels_menu = labels;
+    }
+
+    /// Atualiza `.x`/`.y` dos labels SNFH sem re-shaping — chamado a cada frame durante animação.
+    fn update_snfh_label_positions(&mut self, size: PhysicalSize<u32>) {
+        if self.labels_snfh.is_empty() { return; }
+        let ease = {
+            let t = self.snfh_anim_t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let w    = size.width  as f32;
+        let h    = size.height as f32;
+        let y_ct = h * 0.14;
+        let box_w = (w * 0.175).max(190.0).min(240.0);
+        let box_h = 92.0_f32;
+        let pad   = 12.0_f32;
+        // Posição interpolada do canto do box SNFH
+        let sx = (w - box_w - 24.0) + (24.0 - (w - box_w - 24.0)) * ease;
+        let sy = y_ct + (box_h + 12.0) * ease;
+        // 3 labels: título (idx 0), volume (idx 1), descritor (idx 2)
+        let offsets: [(f32, f32); 3] = [(pad, 20.0), (pad, 38.0), (pad, 62.0)];
+        for (lbl, (ox, oy)) in self.labels_snfh.iter_mut().zip(offsets.iter()) {
+            lbl.x = sx + ox;
+            lbl.y = sy + *oy;
+        }
+    }
+
     fn rgb_f(c: [f32; 3]) -> Color {
         Color::rgb((c[0]*255.0) as u8, (c[1]*255.0) as u8, (c[2]*255.0) as u8)
     }
@@ -409,11 +541,23 @@ impl App {
 
         let mut always: Vec<Label> = Vec::new();
         let mut panel:  Vec<Label> = Vec::new();
+        let mut snfh:   Vec<Label> = Vec::new();
+
+        // ── Barra de menu — itens do topo ────────────────────────────────────
+        {
+            let menu_col = Color::rgb(196, 208, 224);
+            let bar_y    = (MENU_BAR_H - 11.5_f32 * 1.25) / 2.0;
+            let tops = [("Arquivo", MENU_TOP_XS[0]), ("Casos", MENU_TOP_XS[1]), ("Sobre", MENU_TOP_XS[2])];
+            for (text, lx) in &tops {
+                always.push(Label::new(fs, text, 11.5, menu_col, lx + 10.0, bar_y.max(4.0)));
+            }
+        }
 
         // ── Título ──────────────────────────────────────────────────────────
         let mut title = Label::new_bold(fs, "NeuroScan", 28.0, Self::col_header(), 0.0, 0.0);
         title.x = (w - title.measured_width()) / 2.0;
-        title.y = h * 0.04;
+        // Garante que o título fica abaixo da barra de menu
+        title.y = (h * 0.04).max(MENU_BAR_H + 8.0);
 
         // ── Subtítulo ────────────────────────────────────────────────────────
         let sub_text = if self.scan.case_id.is_empty() {
@@ -434,21 +578,11 @@ impl App {
         // ── Callouts ─────────────────────────────────────────────────────────
         let y_ct  = h * 0.14;
         let box_w = (w * 0.175).max(190.0).min(240.0);
-        let box_h = 92.0_f32;
-        let pad   = 12.0_f32;
+        let _box_h = 92.0_f32;
+        let pad    = 12.0_f32;
 
         // Cor da microlegenda — mais clara que col_dim para contraste adequado no fundo escuro
         let col_micro = Color::rgb(148, 164, 182);
-
-        // Posição animada do SNFH: desliza suavemente entre direita (0.0) e esquerda (1.0)
-        let ease_snfh = {
-            let t = self.snfh_anim_t.clamp(0.0, 1.0);
-            t * t * (3.0 - 2.0 * t)  // smoothstep
-        };
-        let snfh_right_x = w - box_w - 24.0;
-        let snfh_left_x  = 24.0_f32;
-        let snfh_right_y = y_ct;
-        let snfh_left_y  = y_ct + box_h + 12.0;  // abaixo do ET callout, lado esquerdo
 
         // ET — canto superior esquerdo
         {
@@ -468,22 +602,19 @@ impl App {
                 8.8, col_micro, ex + pad, ey + 62.0));
         }
 
-        // SNFH — posição interpolada (direita → esquerda quando painel abre)
+        // SNFH — labels em vec separado; posição será definida por update_snfh_label_positions()
         {
-            let sx = snfh_right_x + (snfh_left_x - snfh_right_x) * ease_snfh;
-            let sy = snfh_right_y + (snfh_left_y - snfh_right_y) * ease_snfh;
-            let vol = if self.scan.snfh_volume_ml > 0.0 {
+            let vol_str = if self.scan.snfh_volume_ml > 0.0 {
                 format!("{:.1} mL", self.scan.snfh_volume_ml)
             } else { String::new() };
-            always.push(Label::new(fs,
+            // Posição inicial qualquer — update_snfh_label_positions corrige antes do próximo frame
+            snfh.push(Label::new(fs,
                 "\u{25CF}  SNFH  \u{00B7}  Peritumoral Edema",
-                10.5, Self::rgb_f(SNFH_COLOR), sx + pad, sy + 20.0));
-            if !vol.is_empty() {
-                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, sx + pad, sy + 38.0));
-            }
-            always.push(Label::new(fs,
+                10.5, Self::rgb_f(SNFH_COLOR), 0.0, 0.0));
+            snfh.push(Label::new_bold(fs, &vol_str, 13.0, Color::WHITE, 0.0, 0.0));
+            snfh.push(Label::new(fs,
                 "Edema e infiltracao peritumoral",
-                8.8, col_micro, sx + pad, sy + 62.0));
+                8.8, col_micro, 0.0, 0.0));
         }
 
         // NETC — centro inferior
@@ -654,6 +785,7 @@ impl App {
 
         self.labels_always = always;
         self.labels_panel  = panel;
+        self.labels_snfh   = snfh;
     }
 
     // -----------------------------------------------------------------------
@@ -824,6 +956,55 @@ impl App {
             }
         }
 
+        // ── Menu bar — renderizada por último: fica sobre tudo ────────────────
+        // Fundo e separador inferior
+        b.rect(0.0, 0.0, w, MENU_BAR_H, [0.04, 0.06, 0.12, 0.97], w, h);
+        b.rect(0.0, MENU_BAR_H - 1.0, w, 1.0, [0.18, 0.26, 0.44, 0.45], w, h);
+
+        // Highlight do item ativo (menu aberto) e do item hovered
+        for i in 0..3_usize {
+            let ix = MENU_TOP_XS[i];
+            let iw = MENU_TOP_WS[i];
+            let is_open    = self.menu_open == i as i32;
+            let is_hovered = self.menu_hover_top == i as i32;
+            if is_open {
+                b.rect(ix, 0.0, iw, MENU_BAR_H, [0.20, 0.32, 0.55, 0.82], w, h);
+            } else if is_hovered {
+                b.rect(ix, 0.0, iw, MENU_BAR_H, [0.14, 0.22, 0.40, 0.55], w, h);
+            }
+        }
+
+        // Dropdown do menu aberto
+        if self.menu_open >= 0 {
+            let mid      = self.menu_open as usize;
+            let drop_x   = MENU_TOP_XS[mid];
+            let drop_h   = self.dropdown_height(self.menu_open);
+            let entries  = self.build_menu_entries(self.menu_open);
+
+            // Fundo e bordas
+            b.rect(drop_x, MENU_BAR_H, MENU_DROP_W, drop_h, [0.05, 0.08, 0.15, 0.97], w, h);
+            b.rect(drop_x, MENU_BAR_H, MENU_DROP_W, 1.0,    [0.22, 0.32, 0.52, 0.55], w, h);
+            b.rect(drop_x, MENU_BAR_H + drop_h, MENU_DROP_W, 1.0, [0.22, 0.32, 0.52, 0.55], w, h);
+            b.rect(drop_x, MENU_BAR_H, 1.0, drop_h,              [0.22, 0.32, 0.52, 0.55], w, h);
+            b.rect(drop_x + MENU_DROP_W - 1.0, MENU_BAR_H, 1.0, drop_h, [0.22, 0.32, 0.52, 0.55], w, h);
+
+            // Items e separadores
+            let mut iy = MENU_BAR_H;
+            for (idx, (_, _, is_sep)) in entries.iter().enumerate() {
+                if *is_sep {
+                    let sep_y = iy + MENU_SEP_H / 2.0;
+                    b.rect(drop_x + 8.0, sep_y, MENU_DROP_W - 16.0, 1.0, [0.18, 0.26, 0.42, 0.38], w, h);
+                    iy += MENU_SEP_H;
+                } else {
+                    if self.menu_hover_item == idx as i32 {
+                        b.rect(drop_x + 1.0, iy, MENU_DROP_W - 2.0, MENU_ITEM_H,
+                            [0.16, 0.26, 0.46, 0.80], w, h);
+                    }
+                    iy += MENU_ITEM_H;
+                }
+            }
+        }
+
         b
     }
 }
@@ -941,6 +1122,12 @@ impl ApplicationHandler for App {
 
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
+                    // Fechar menu ao pressionar qualquer tecla
+                    if self.menu_open >= 0 {
+                        self.menu_open       = -1;
+                        self.menu_hover_item = -1;
+                        self.labels_menu     = Vec::new();
+                    }
                     self.last_interaction = Instant::now();
                     match &event.logical_key {
                         Key::Character(ch) => match ch.as_str() {
@@ -972,6 +1159,102 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
+                if button == MouseButton::Left && state == ElementState::Pressed {
+                    let (mx, my) = self.mouse_pos.unwrap_or((0.0, 0.0));
+
+                    // ── Click na barra de menu (top items) ────────────────────
+                    let clicked_top = if my < MENU_BAR_H as f64 {
+                        MENU_TOP_XS.iter().zip(MENU_TOP_WS.iter()).enumerate()
+                            .find(|(_, (x, w))| mx >= **x as f64 && mx < (**x + **w) as f64)
+                            .map_or(-1, |(i, _)| i as i32)
+                    } else { -1 };
+
+                    if clicked_top >= 0 {
+                        self.menu_open = if self.menu_open == clicked_top { -1 } else { clicked_top };
+                        self.menu_hover_item = -1;
+                        let sz = self.window.as_ref().map(|w| w.inner_size())
+                            .unwrap_or(PhysicalSize::new(1280, 720));
+                        self.rebuild_menu_labels(sz);
+                        if let Some(w) = &self.window { w.request_redraw(); }
+                        return;
+                    }
+
+                    // ── Click num item do dropdown ────────────────────────────
+                    if self.menu_open >= 0 && self.menu_hover_item >= 0 {
+                        let menu_id  = self.menu_open;
+                        let item_idx = self.menu_hover_item;
+                        let entries  = self.build_menu_entries(menu_id);
+                        self.menu_open       = -1;
+                        self.menu_hover_item = -1;
+                        self.labels_menu     = Vec::new();
+                        // Executar ação
+                        if let Some((_, _, is_sep)) = entries.get(item_idx as usize) {
+                            if !is_sep {
+                                match (menu_id, item_idx) {
+                                    (0, 0) => { // Arquivo → Abrir Volume NIfTI
+                                        if self.dialog_rx.is_none() && !self.infer_active {
+                                            let (tx, rx) = mpsc::channel();
+                                            std::thread::spawn(move || {
+                                                let path = rfd::FileDialog::new()
+                                                    .set_title("Selecionar volume NIfTI (.nii.gz)")
+                                                    .add_filter("NIfTI", &["gz", "nii"])
+                                                    .pick_file();
+                                                if let Some(p) = path { let _ = tx.send(p); }
+                                            });
+                                            self.dialog_rx = Some(rx);
+                                        }
+                                    }
+                                    (0, 2) => { // Arquivo → Sair
+                                        event_loop.exit();
+                                        return;
+                                    }
+                                    (1, 0) => self.navigate_case(-1), // Casos → Anterior
+                                    (1, 1) => self.navigate_case(1),  // Casos → Proximo
+                                    (1, n) if n >= 3 => {             // Casos → item da lista
+                                        let case_idx = (n - 3) as usize;
+                                        if case_idx < TOP_CASES.len() && case_idx != self.current_case {
+                                            self.transition_target = case_idx;
+                                            self.transition_phase  = f32::EPSILON;
+                                            self.spinner_angle     = 0.0;
+                                            self.last_interaction  = Instant::now();
+                                            let device  = self.gpu.as_ref().unwrap().device.clone();
+                                            let case_id = TOP_CASES[case_idx].to_string();
+                                            let (tx, rx) = mpsc::channel();
+                                            std::thread::spawn(move || {
+                                                let case_dir = format!("{}/{}", CASES_DIR, case_id);
+                                                let defs = [
+                                                    (format!("{}/tumor_et.obj",   case_dir), ET_COLOR,   1.0_f32),
+                                                    (format!("{}/tumor_snfh.obj", case_dir), SNFH_COLOR, 1.0_f32),
+                                                    (format!("{}/tumor_netc.obj", case_dir), NETC_COLOR, 1.0_f32),
+                                                ];
+                                                let meshes: Vec<LoadedMesh> = defs.iter()
+                                                    .filter_map(|(path, tint, alpha)| {
+                                                        Mesh::from_obj(&device, path).ok()
+                                                            .map(|m| LoadedMesh { mesh: m, tint: *tint, alpha: *alpha })
+                                                    })
+                                                    .collect();
+                                                let _ = tx.send(meshes);
+                                            });
+                                            self.loading_rx = Some(rx);
+                                        }
+                                    }
+                                    _ => {} // Sobre: informacional, sem ação
+                                }
+                            }
+                        }
+                        if let Some(w) = &self.window { w.request_redraw(); }
+                        return;
+                    }
+
+                    // ── Click fora do menu: fecha dropdown ────────────────────
+                    if self.menu_open >= 0 {
+                        self.menu_open       = -1;
+                        self.menu_hover_item = -1;
+                        self.labels_menu     = Vec::new();
+                        if let Some(w) = &self.window { w.request_redraw(); }
+                    }
+                }
+
                 if button == MouseButton::Left {
                     self.mouse_pressed = state == ElementState::Pressed;
                     self.last_interaction = Instant::now();
@@ -983,15 +1266,51 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
+                let mx = position.x;
+                let my = position.y;
+
                 if self.mouse_pressed {
                     self.last_interaction = Instant::now();
                     if let Some((px, py)) = self.mouse_pos {
-                        self.camera.yaw   += (position.x - px) as f32 * MOUSE_SENSITIVITY;
-                        self.camera.pitch  = (self.camera.pitch - (position.y - py) as f32 * MOUSE_SENSITIVITY)
+                        self.camera.yaw   += (mx - px) as f32 * MOUSE_SENSITIVITY;
+                        self.camera.pitch  = (self.camera.pitch - (my - py) as f32 * MOUSE_SENSITIVITY)
                             .clamp(-PITCH_LIMIT, PITCH_LIMIT);
                     }
                 }
-                self.mouse_pos = Some((position.x, position.y));
+                self.mouse_pos = Some((mx, my));
+
+                // ── Hover tracking da menu bar ─────────────────────────────
+                let new_top = if my < MENU_BAR_H as f64 {
+                    MENU_TOP_XS.iter().zip(MENU_TOP_WS.iter()).enumerate()
+                        .find(|(_, (x, w))| mx >= **x as f64 && mx < (**x + **w) as f64)
+                        .map_or(-1, |(i, _)| i as i32)
+                } else { -1 };
+
+                let new_item = if self.menu_open >= 0 {
+                    let mid    = self.menu_open as usize;
+                    let drop_x = MENU_TOP_XS[mid] as f64;
+                    let entries = self.build_menu_entries(self.menu_open);
+                    let drop_h: f64 = entries.iter()
+                        .map(|(_, _, s)| if *s { MENU_SEP_H } else { MENU_ITEM_H })
+                        .sum::<f32>() as f64 + 4.0;
+                    if mx >= drop_x && mx < drop_x + MENU_DROP_W as f64
+                        && my >= MENU_BAR_H as f64 && my < MENU_BAR_H as f64 + drop_h
+                    {
+                        let rel = my - MENU_BAR_H as f64;
+                        let mut y = 0.0_f64;
+                        entries.iter().enumerate().find_map(|(i, (_, _, is_sep))| {
+                            let ih = if *is_sep { MENU_SEP_H } else { MENU_ITEM_H } as f64;
+                            if rel >= y && rel < y + ih { Some(i as i32) }
+                            else { y += ih; None }
+                        }).unwrap_or(-1)
+                    } else { -1 }
+                } else { -1 };
+
+                if new_top != self.menu_hover_top || new_item != self.menu_hover_item {
+                    self.menu_hover_top  = new_top;
+                    self.menu_hover_item = new_item;
+                    if let Some(w) = &self.window { w.request_redraw(); }
+                }
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
@@ -1009,6 +1328,8 @@ impl ApplicationHandler for App {
                 if let Some(gpu) = &mut self.gpu { gpu.resize(new_size); }
                 if self.splash_done {
                     self.build_labels(new_size);
+                    self.update_snfh_label_positions(new_size);
+                    self.rebuild_menu_labels(new_size);
                 } else {
                     self.build_splash_labels(new_size);
                 }
@@ -1043,6 +1364,8 @@ impl ApplicationHandler for App {
                                 self.gpu.as_ref().map_or(720,  |g| g.config.height),
                             );
                             self.build_labels(sz);
+                            self.update_snfh_label_positions(sz);
+                            self.rebuild_menu_labels(sz);
                             info!(meshes = self.meshes.len(), "splash: meshes prontas");
                         }
                     }
@@ -1191,6 +1514,8 @@ impl ApplicationHandler for App {
                                 self.gpu.as_ref().map_or(720,  |g| g.config.height),
                             );
                             self.build_labels(sz);
+                            self.update_snfh_label_positions(sz);
+                            self.rebuild_menu_labels(sz);
                             info!("caso inferido carregado com sucesso");
                         } else {
                             warn!("inferencia Python falhou ou foi cancelada");
@@ -1261,20 +1586,25 @@ impl ApplicationHandler for App {
                     self.gpu.as_ref().map_or(720,  |g| g.config.height),
                 );
 
-                // ── Animação do SNFH callout (desliza entre direita e esquerda) ──
+                // ── Animação do SNFH callout — apenas muta .x/.y nos labels existentes ──
+                // Sem rebuild de font/shaping: zero custo por frame, animação perfeitamente fluida.
                 let snfh_target = if self.show_panel { 1.0_f32 } else { 0.0_f32 };
                 let snfh_prev   = self.snfh_anim_t;
-                let snfh_speed  = dt / 0.28;  // 0.28s para percurso completo
+                let snfh_speed  = dt / 0.28;
                 self.snfh_anim_t = if self.snfh_anim_t < snfh_target {
                     (self.snfh_anim_t + snfh_speed).min(snfh_target)
                 } else {
                     (self.snfh_anim_t - snfh_speed).max(snfh_target)
                 };
                 if (self.snfh_anim_t - snfh_prev).abs() > 0.001 {
-                    rebuild_needed = true;
+                    self.update_snfh_label_positions(size);
                 }
 
-                if rebuild_needed { self.build_labels(size); }
+                if rebuild_needed {
+                    self.build_labels(size);
+                    self.update_snfh_label_positions(size);
+                    self.rebuild_menu_labels(size);
+                }
 
                 let cam   = self.camera.build_uniform(size.width, size.height);
                 let infer = self.infer_active;
@@ -1282,7 +1612,9 @@ impl ApplicationHandler for App {
                     self.pulse_t, self.transition_phase, self.spinner_angle, infer);
 
                 let mut label_refs: Vec<&Label> = self.labels_always.iter().collect();
-                if self.show_panel { label_refs.extend(self.labels_panel.iter()); }
+                label_refs.extend(self.labels_snfh.iter());
+                if self.show_panel   { label_refs.extend(self.labels_panel.iter()); }
+                if self.menu_open >= 0 { label_refs.extend(self.labels_menu.iter()); }
 
                 if let Some(gpu) = &mut self.gpu {
                     let entries: Vec<MeshEntry> = self.meshes.iter()
