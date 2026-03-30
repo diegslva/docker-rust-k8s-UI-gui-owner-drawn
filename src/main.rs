@@ -614,7 +614,9 @@ impl App {
 
         // ── Barra de menu — itens do topo ────────────────────────────────────
         {
-            let menu_col = Color::rgb(196, 208, 224);
+            // Tom quase-branco frio (cool white): legível sobre o navy escuro do menu bar
+            // sem perder a identidade azul do layout. Contraste WCAG AA > 14:1.
+            let menu_col = Color::rgb(236, 242, 255);
             let bar_y = (MENU_BAR_H - 11.5_f32 * 1.25) / 2.0;
             let tops = [
                 ("Arquivo", MENU_TOP_XS[0]),
