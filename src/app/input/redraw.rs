@@ -272,7 +272,10 @@ impl App {
                     overlay_prims.rect(0.0, 0.0, sw, sh, [0.03, 0.04, 0.08, fade_alpha], sw, sh);
                     let mut label_refs: Vec<&Label> = self.labels_always.iter().collect();
                     label_refs.extend(self.labels_snfh.iter());
-                    let overlay_label_refs: Vec<&Label> = self.labels_menu_bar.iter().collect();
+                    let mut overlay_label_refs: Vec<&Label> = self.labels_menu_bar.iter().collect();
+                    if self.menu_open >= 0 {
+                        overlay_label_refs.extend(self.labels_menu.iter());
+                    }
                     if let Some(gpu) = &mut self.gpu {
                         let entries: Vec<MeshEntry> = self
                             .meshes
@@ -336,7 +339,11 @@ impl App {
             let prims = self.build_home_primitives(sw, sh);
             let label_refs: Vec<&Label> = self.home_labels.iter().collect();
             let overlay_prims = self.build_menu_overlay(sw, sh);
-            let overlay_label_refs: Vec<&Label> = self.labels_menu_bar.iter().collect();
+            // Menu bar + dropdown items (quando aberto) — mesmo padrão do render 3D
+            let mut overlay_label_refs: Vec<&Label> = self.labels_menu_bar.iter().collect();
+            if self.menu_open >= 0 {
+                overlay_label_refs.extend(self.labels_menu.iter());
+            }
             let cam = self.camera.build_uniform(sz.width, sz.height);
             if let Some(gpu) = &mut self.gpu {
                 if let Err(e) = gpu.render(

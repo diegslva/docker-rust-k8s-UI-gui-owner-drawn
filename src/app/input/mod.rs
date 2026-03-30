@@ -46,7 +46,7 @@ impl ApplicationHandler for App {
 
         let icon = load_embedded_icon().ok();
         let mut attrs = WindowAttributes::default()
-            .with_title("NeuroScan — Visualizador Medico 3D")
+            .with_title("NeuroScan AI — Segmentação Cerebral Inteligente")
             .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
             .with_visible(false);
         if let Some(ic) = icon {
