@@ -225,13 +225,25 @@ impl App {
                 self.infer_fade = 0.01;
                 info!("caso inferido carregado — iniciando fade para 3D");
             } else {
-                // Falha: volta para home screen
+                // Falha: captura o erro do progresso (se Python enviou NEUROSCAN:ERROR)
+                // e mostra na home screen para o usuario saber o que aconteceu
+                let err_msg = self
+                    .infer_progress
+                    .as_ref()
+                    .and_then(|p| match &p.phase {
+                        crate::app::infer::InferPhase::Error(e) => Some(e.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| {
+                        "Falha na inferencia. Verifique o arquivo NIfTI.".to_string()
+                    });
                 self.infer_active = false;
                 self.infer_progress = None;
                 self.infer_labels.clear();
                 self.infer_fade = 0.0;
                 self.show_home = true;
-                warn!("inferencia Python falhou — retornando a home screen");
+                self.python_env_error = Some(err_msg.clone());
+                warn!(error = %err_msg, "inferencia falhou — erro visivel na home screen");
             }
         }
 
