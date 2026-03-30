@@ -93,7 +93,7 @@ pub fn navigate_idx(current: usize, dir: i32, n: usize) -> usize {
 
 /// Largura de um callout box em pixels dado o viewport width.
 pub fn callout_box_w(viewport_w: f32) -> f32 {
-    (viewport_w * 0.175).max(190.0).min(240.0)
+    (viewport_w * 0.175).clamp(190.0, 240.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ pub fn menu_entries(
         1 => {
             let mut v: Vec<(String, String, bool)> = vec![
                 ("Caso Anterior".into(), "\u{2190}".into(), false),
-                ("Proximo Caso".into(), "\u{2192}".into(), false),
+                ("Próximo Caso".into(), "\u{2192}".into(), false),
                 (String::new(), String::new(), true),
             ];
             for (i, id) in TOP_CASES.iter().enumerate() {
