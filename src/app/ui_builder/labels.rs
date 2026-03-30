@@ -452,6 +452,8 @@ impl App {
     /// Mostrada apos a splash, antes de qualquer inferencia. Apresenta o
     /// NeuroScan como produto: branding, capacidades, call-to-action.
     pub(crate) fn build_home_labels(&mut self, size: PhysicalSize<u32>) {
+        let anim_t = self.home_anim_t;
+        let python_err = self.python_env_error.clone();
         let Some(gpu) = &mut self.gpu else { return };
         let w = size.width as f32;
         let h = size.height as f32;
@@ -494,18 +496,29 @@ impl App {
             labels.push(lbl);
         }
 
-        // Call-to-action
-        let mut cta = Label::new_bold(
-            fs,
-            "Arquivo  >  Abrir Volume NIfTI para iniciar",
-            13.0,
-            Color::rgb(120, 180, 240),
-            0.0,
-            0.0,
-        );
-        cta.x = (w - cta.measured_width()) / 2.0;
-        cta.y = feat_y + features.len() as f32 * 20.0 + 32.0;
-        labels.push(cta);
+        // Call-to-action (breathing alpha para atrair atenção)
+        let cta_y = feat_y + features.len() as f32 * 20.0 + 32.0;
+        if let Some(err) = &python_err {
+            // Erro de ambiente: mostra mensagem de aviso em âmbar
+            let mut err_lbl = Label::new_bold(fs, err, 11.5, Color::rgb(240, 180, 60), 0.0, 0.0);
+            err_lbl.x = (w - err_lbl.measured_width()) / 2.0;
+            err_lbl.y = cta_y;
+            labels.push(err_lbl);
+        } else {
+            // Breathing: alpha oscila suavemente entre 160 e 255
+            let breath_alpha = (180.0 + 50.0 * (anim_t * 1.5).sin()) as u8;
+            let mut cta = Label::new_bold(
+                fs,
+                "Arquivo  >  Abrir Volume NIfTI para iniciar",
+                13.0,
+                Color::rgba(120, 180, 240, breath_alpha),
+                0.0,
+                0.0,
+            );
+            cta.x = (w - cta.measured_width()) / 2.0;
+            cta.y = cta_y;
+            labels.push(cta);
+        }
 
         // Footer
         let footer = format!(
@@ -585,8 +598,9 @@ impl App {
         elapsed_lbl.y = cy + 24.0;
         labels.push(elapsed_lbl);
 
-        // Volumes parciais (aparecem conforme o Python reporta)
+        // Volumes parciais com pulse sutil (cor oscila suavemente)
         let vol_y = h * 0.80;
+        let vol_bright = (progress.anim_t * 3.0).sin().abs() * 0.12;
         let vol_items = [
             ("ET", progress.et_volume_ml, ET_COLOR),
             ("SNFH", progress.snfh_volume_ml, SNFH_COLOR),
@@ -595,7 +609,13 @@ impl App {
         for (i, (name, ml, color)) in vol_items.iter().enumerate() {
             if *ml > 0.0 {
                 let text = format!("\u{25CF}  {}  {:.1} mL", name, ml);
-                let mut lbl = Label::new(fs, &text, 12.0, rgb_f(*color), 0.0, 0.0);
+                // Brighten: adiciona vol_bright a cada canal RGB (clamped a 1.0)
+                let bright_col = Color::rgb(
+                    ((color[0] + vol_bright).min(1.0) * 255.0) as u8,
+                    ((color[1] + vol_bright).min(1.0) * 255.0) as u8,
+                    ((color[2] + vol_bright).min(1.0) * 255.0) as u8,
+                );
+                let mut lbl = Label::new(fs, &text, 12.0, bright_col, 0.0, 0.0);
                 lbl.x = (w - 120.0) / 2.0;
                 lbl.y = vol_y + i as f32 * 22.0;
                 labels.push(lbl);

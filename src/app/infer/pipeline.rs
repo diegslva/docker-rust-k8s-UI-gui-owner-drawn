@@ -6,6 +6,45 @@ use tracing::{info, warn};
 
 use super::{InferMsg, InferPhase};
 
+/// Verifica se Python e as dependencias necessarias estao disponiveis.
+///
+/// Executa `python -c "import ..."` de forma sincrona (~100ms).
+/// Retorna Ok com os providers ONNX disponiveis, ou Err com mensagem legivel.
+pub(crate) fn check_python_env() -> Result<String, String> {
+    let check_script = concat!(
+        "import nibabel, onnxruntime, scipy, skimage; ",
+        "import onnxruntime as ort; ",
+        "print(','.join(ort.get_available_providers()))"
+    );
+    let output = Command::new("python")
+        .args(["-c", check_script])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let providers = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            info!(providers = %providers, "ambiente Python verificado");
+            Ok(providers)
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            warn!(stderr = %stderr, "dependencias Python faltando");
+            Err(
+                "Dependencias Python faltando. Execute: pip install nibabel onnxruntime scipy scikit-image"
+                    .to_string(),
+            )
+        }
+        Err(e) => {
+            warn!(error = %e, "Python nao encontrado");
+            Err(format!(
+                "Python nao encontrado ({}). Instale Python 3.10+ com as dependencias.",
+                e
+            ))
+        }
+    }
+}
+
 /// Inicia o subprocess Python de inferência e retorna um receiver de progresso.
 ///
 /// Lê stdout linha a linha em thread dedicada, parseia o protocolo `NEUROSCAN:*`
