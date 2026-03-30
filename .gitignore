@@ -12,3 +12,9 @@ assets/models/brain_meta.json
 
 # Historico de treino — versionado (pequeno, util para rastrear evolucao dos experimentos)
 # assets/models/training/*.json  <- nao ignorar
+
+# Assets Turbosquid — licenca comercial, nao distribuir no repo publico
+assets/models/turbosquid/
+
+# Configuracao local do Claude Code
+.claude/
