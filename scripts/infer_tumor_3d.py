@@ -1,26 +1,14 @@
 """
-infer_tumor_3d.py -- NeuroScan: nnUNet 2D -> segmentacao volumetrica 3D -> 3 OBJs
+infer_tumor_3d.py -- NeuroScan: nnUNet 2D -> segmentacao volumetrica 3D -> 3 OBJs (alta resolucao)
 
-Pipeline completo de IA:
-  NIfTI FLAIR -> 155 fatias -> nnUNet ONNX -> mascara 3D (ET + SNFH + NETC)
-  -> Marching Cubes por classe -> 3 OBJs alinhados ao brain.obj
-
-Classes WHO 2021:
-  ET   (Enhancing Tumor)      -> tumor_et.obj    [vermelho]
-  SNFH (Peritumoral Edema)    -> tumor_snfh.obj  [amarelo/amber]
-  NETC (Necrotic Core)        -> tumor_netc.obj   [azul]
+Pipeline:
+  NIfTI FLAIR -> 155 fatias -> nnUNet ONNX -> mascara 3D (ET+SNFH+NETC)
+  -> upsample 2x -> Marching Cubes por classe -> 3 OBJs alinhados ao brain.obj
 
 Uso:
     uv run --project G:/www/neuroscan.com python scripts/infer_tumor_3d.py
 
-    # Customizado:
-    uv run --project G:/www/neuroscan.com python scripts/infer_tumor_3d.py \
-        --input  G:/www/neuroscan.com/data/brats/Task01_BrainTumour/imagesTr/BRATS_001.nii.gz \
-        --model  G:/www/neuroscan.com/models/nnunet_brats.onnx \
-        --meta   assets/models/brain_meta.json \
-        --outdir assets/models
-
-Requer: nibabel, scikit-image, numpy, onnxruntime, Pillow  (venv neuroscan.com)
+Requer: nibabel, scikit-image, scipy, numpy, onnxruntime, Pillow
 """
 
 from __future__ import annotations
@@ -34,69 +22,50 @@ import nibabel as nib
 import numpy as np
 import onnxruntime as ort
 from PIL import Image
+from scipy.ndimage import zoom, gaussian_filter
 from skimage.measure import marching_cubes
 
-# Constantes identicas ao treinamento (train_brats_segmentation.py)
-FLAIR_CHANNEL: int = 0   # canal FLAIR no volume 4-modal Decathlon
-INPUT_SIZE: int = 256     # resolucao de entrada do modelo
-NUM_CLASSES: int = 4      # background + ET + SNFH + NETC
+FLAIR_CHANNEL: int = 0
+INPUT_SIZE: int    = 256
+NUM_CLASSES: int   = 4
 
-# Classes de tumor e suas propriedades
 TUMOR_CLASSES: dict[int, dict] = {
     1: {"name": "ET",   "full": "Enhancing Tumor",   "obj": "tumor_et.obj"},
     2: {"name": "SNFH", "full": "Peritumoral Edema",  "obj": "tumor_snfh.obj"},
     3: {"name": "NETC", "full": "Necrotic Core",      "obj": "tumor_netc.obj"},
 }
-
-# Minimo de voxels por classe para tentar Marching Cubes
 MIN_VOXELS_PER_CLASS = 200
 
 
 def load_flair_volume(path: Path) -> np.ndarray:
-    """Carrega canal FLAIR do NIfTI. Retorna (H, W, D) float32."""
-    img = nib.load(str(path))
+    img  = nib.load(str(path))
     data = img.get_fdata(dtype=np.float32)
     print(f"Volume shape: {data.shape}")
-    if data.ndim == 4:
-        flair = data[..., FLAIR_CHANNEL]
-        print(f"FLAIR canal {FLAIR_CHANNEL} -> shape {flair.shape}")
-    elif data.ndim == 3:
-        flair = data
-    else:
-        raise ValueError(f"Shape inesperado: {data.shape}")
+    flair = data[..., FLAIR_CHANNEL] if data.ndim == 4 else data
+    print(f"FLAIR canal {FLAIR_CHANNEL} -> {flair.shape}")
     return flair
 
 
-def load_meta(meta_path: Path) -> tuple[np.ndarray, float]:
-    """Carrega center/scale do brain_meta.json para alinhamento exato."""
+def load_meta(meta_path: Path) -> tuple[np.ndarray, float, float]:
     with open(meta_path, encoding="utf-8") as f:
         meta = json.load(f)
-    center = np.array(meta["center"], dtype=np.float64)
-    scale  = float(meta["scale"])
-    print(f"brain_meta.json: center={[f'{c:.3f}' for c in center]}, scale={scale:.3f}")
-    return center, scale
+    center  = np.array(meta["center"],  dtype=np.float64)
+    scale   = float(meta["scale"])
+    upsample = float(meta.get("upsample_factor", 1.0))
+    print(f"brain_meta: center={[f'{c:.1f}' for c in center]}  scale={scale:.3f}  upsample={upsample}x")
+    return center, scale, upsample
 
 
 def normalize_slice(s: np.ndarray) -> np.ndarray:
-    """Normalizacao por fatia [0,1] identica ao treinamento."""
     s_min, s_max = s.min(), s.max()
     if s_max - s_min > 1e-8:
         return ((s - s_min) / (s_max - s_min)).astype(np.float32)
     return np.zeros_like(s, dtype=np.float32)
 
 
-def run_inference_volume(
-    flair: np.ndarray,
-    session: ort.InferenceSession,
-    input_name: str,
-) -> np.ndarray:
-    """
-    Inferencia fatia por fatia ao longo do eixo axial (z).
-    Retorna mascara 3D (H, W, D) uint8 com labels 0-3.
-    """
-    H, W, D = flair.shape
-    mask_3d = np.zeros((H, W, D), dtype=np.uint8)
-
+def run_inference_volume(flair: np.ndarray, session: ort.InferenceSession, input_name: str) -> np.ndarray:
+    H, W, D  = flair.shape
+    mask_3d  = np.zeros((H, W, D), dtype=np.uint8)
     non_empty = tumor_slices = 0
     print(f"Inferencia: {D} fatias axiais ({INPUT_SIZE}x{INPUT_SIZE})...")
 
@@ -106,33 +75,36 @@ def run_inference_volume(
             continue
         non_empty += 1
 
-        # Pre-processamento identico ao treinamento
         norm    = normalize_slice(s)
         pil     = Image.fromarray((norm * 255).astype(np.uint8))
         resized = pil.resize((INPUT_SIZE, INPUT_SIZE), Image.BILINEAR)
         arr     = np.array(resized, dtype=np.float32) / 255.0
-        tensor  = np.stack([arr, arr, arr], axis=0)[np.newaxis, ...]  # (1, 3, H, W)
+        tensor  = np.stack([arr, arr, arr], axis=0)[np.newaxis, ...]
 
         outputs    = session.run(None, {input_name: tensor})
-        pred_small = np.argmax(outputs[0][0], axis=0).astype(np.uint8)  # (256, 256)
-
-        # Resize de volta para resolucao original
-        pred_full = np.array(Image.fromarray(pred_small).resize((W, H), Image.NEAREST))
+        pred_small = np.argmax(outputs[0][0], axis=0).astype(np.uint8)
+        pred_full  = np.array(Image.fromarray(pred_small).resize((W, H), Image.NEAREST))
         mask_3d[:, :, z] = pred_full
 
         if (pred_full > 0).any():
             tumor_slices += 1
         if non_empty % 20 == 0:
-            tp = int((pred_full > 0).sum())
-            print(f"  z={z:3d}/{D}  non_empty={non_empty}  tumor_px={tp:5d}")
+            print(f"  z={z:3d}/{D}  tumor_px={(pred_full > 0).sum():5d}")
 
-    total_tumor = int((mask_3d > 0).sum())
-    print(f"Concluido: {non_empty} fatias validas, {tumor_slices} com tumor, {total_tumor:,} voxels de tumor")
+    total = int((mask_3d > 0).sum())
+    print(f"Concluido: {non_empty} fatias validas, {tumor_slices} com tumor, {total:,} voxels")
     return mask_3d
 
 
+def upsample_mask(mask: np.ndarray, factor: float) -> np.ndarray:
+    """Upsample com nearest-neighbor (preserva labels inteiros) + smooth da fronteira."""
+    print(f"Upsample mascara {factor}x: {mask.shape} -> ", end="", flush=True)
+    up = zoom(mask.astype(np.float32), factor, order=0)   # nearest para preservar labels
+    print(up.shape)
+    return up
+
+
 def compute_vertex_normals(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
-    """Normais suaves por vertice."""
     normals = np.zeros_like(verts)
     v0, v1, v2 = verts[faces[:, 0]], verts[faces[:, 1]], verts[faces[:, 2]]
     fn = np.cross(v1 - v0, v2 - v0)
@@ -165,73 +137,51 @@ def extract_class_mesh(
     cls: int,
     center: np.ndarray,
     scale: float,
+    upsample_factor: float,
     out_path: Path,
-    input_name_str: str,
+    label: str,
 ) -> bool:
-    """
-    Extrai mesh de uma classe de tumor, normaliza com o mesmo center/scale
-    do cerebro e salva em OBJ. Retorna True se o mesh foi gerado.
-    """
     cls_info = TUMOR_CLASSES[cls]
     cls_mask = (mask_3d == cls).astype(np.float32)
     voxel_count = int(cls_mask.sum())
-
     print(f"\n  [{cls_info['name']}] {cls_info['full']}: {voxel_count:,} voxels")
 
     if voxel_count < MIN_VOXELS_PER_CLASS:
-        print(f"    AVISO: abaixo do minimo ({MIN_VOXELS_PER_CLASS}), pulando.")
+        print(f"    Abaixo do minimo, pulando.")
         return False
+
+    # Suavizar fronteira da mascara binaria (elimina dentes de serra)
+    cls_smooth = gaussian_filter(cls_mask, sigma=0.8)
+
+    # Upsample para mais vertices (correspondente ao upsample do cerebro)
+    if upsample_factor != 1.0:
+        cls_smooth = zoom(cls_smooth, upsample_factor, order=1)  # linear para mascara suave
 
     try:
-        verts, faces, _, _ = marching_cubes(
-            cls_mask,
-            level=0.5,
-            step_size=1,
-            allow_degenerate=False,
-        )
+        verts, faces, _, _ = marching_cubes(cls_smooth, level=0.5, step_size=1, allow_degenerate=False)
     except ValueError as e:
-        print(f"    AVISO: Marching Cubes falhou ({e}), pulando.")
+        print(f"    Marching Cubes falhou: {e}")
         return False
 
-    print(f"    Marching Cubes: {len(verts):,} vertices, {len(faces):,} triangulos")
+    print(f"    MC: {len(verts):,} vertices, {len(faces):,} triangulos")
 
-    # Normalizar com EXATAMENTE o mesmo center/scale do brain.obj
+    # O center/scale do brain_meta.json foram calculados APOS o upsample do cerebro.
+    # Logo as coordenadas do tumor upsampled (factor=2x) ja estao no mesmo espaco.
     verts_norm = (verts - center) / scale
-    print(f"    Range normalizado: [{verts_norm.min():.3f}, {verts_norm.max():.3f}]")
+    print(f"    Range: [{verts_norm.min():.3f}, {verts_norm.max():.3f}]")
 
     normals = compute_vertex_normals(verts_norm, faces)
-    save_obj(
-        out_path,
-        verts_norm,
-        normals,
-        faces,
-        comment=f"Tumor {cls_info['name']} ({cls_info['full']}) -- nnUNet predicao em {input_name_str}",
-    )
+    save_obj(out_path, verts_norm, normals, faces,
+             comment=f"Tumor {cls_info['name']} -- nnUNet predicao em {label}")
     return True
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="NeuroScan: inferencia nnUNet 3D -> 3 tumor OBJs (ET, SNFH, NETC)"
-    )
-    parser.add_argument(
-        "--input", "-i",
-        default="G:/www/neuroscan.com/data/brats/Task01_BrainTumour/imagesTr/BRATS_001.nii.gz",
-    )
-    parser.add_argument(
-        "--model", "-m",
-        default="G:/www/neuroscan.com/models/nnunet_brats.onnx",
-    )
-    parser.add_argument(
-        "--meta",
-        default="assets/models/brain_meta.json",
-        help="brain_meta.json gerado por extract_brain_mesh.py (center/scale)",
-    )
-    parser.add_argument(
-        "--outdir", "-o",
-        default="assets/models",
-        help="Diretorio de saida para os 3 OBJs",
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input",  "-i", default="G:/www/neuroscan.com/data/brats/Task01_BrainTumour/imagesTr/BRATS_001.nii.gz")
+    parser.add_argument("--model",  "-m", default="G:/www/neuroscan.com/models/nnunet_brats.onnx")
+    parser.add_argument("--meta",         default="assets/models/brain_meta.json")
+    parser.add_argument("--outdir", "-o", default="assets/models")
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -241,52 +191,34 @@ def main() -> None:
 
     for p, name in [(input_path, "volume"), (model_path, "modelo ONNX"), (meta_path, "brain_meta.json")]:
         if not p.exists():
-            print(f"ERRO: {name} nao encontrado: {p}", file=sys.stderr)
-            sys.exit(1)
+            print(f"ERRO: {name} nao encontrado: {p}", file=sys.stderr); sys.exit(1)
 
-    print("=== infer_tumor_3d (NeuroScan — multi-classe) ===")
-    print(f"Volume: {input_path}")
-    print(f"Modelo: {model_path}")
-    print(f"Meta:   {meta_path}")
-    print(f"Saida:  {out_dir}/tumor_{{et,snfh,netc}}.obj")
+    print("=== infer_tumor_3d (NeuroScan multi-classe, alta resolucao) ===")
+    center, scale, upsample_factor = load_meta(meta_path)
     print()
 
-    # Carregar alinhamento do cerebro
-    center, scale = load_meta(meta_path)
-    print()
-
-    # Carregar modelo ONNX
-    providers = [
-        p for p in ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        if p in ort.get_available_providers()
-    ]
-    print(f"Providers ONNX: {providers}")
+    providers = [p for p in ["CUDAExecutionProvider", "CPUExecutionProvider"] if p in ort.get_available_providers()]
+    print(f"ONNX providers: {providers}")
     session    = ort.InferenceSession(str(model_path), providers=providers)
     input_name = session.get_inputs()[0].name
-    print(f"Modelo: input={session.get_inputs()[0].shape}")
     print()
 
-    # Carregar FLAIR e rodar inferencia
-    flair  = load_flair_volume(input_path)
+    flair   = load_flair_volume(input_path)
     print()
     mask_3d = run_inference_volume(flair, session, input_name)
     print()
 
-    # Distribuicao de classes
-    print("Distribuicao de classes previstas:")
-    names = {0: "background", 1: "ET", 2: "SNFH", 3: "NETC"}
-    for cls_id, cls_name in names.items():
+    print("Distribuicao de classes:")
+    for cls_id, cls_name in {0:"bg", 1:"ET", 2:"SNFH", 3:"NETC"}.items():
         cnt = int((mask_3d == cls_id).sum())
-        pct = cnt / mask_3d.size * 100
-        print(f"  {cls_id} {cls_name:<12}: {cnt:>9,} voxels ({pct:.2f}%)")
+        print(f"  {cls_id} {cls_name:<6}: {cnt:>9,} voxels ({cnt/mask_3d.size*100:.2f}%)")
     print()
 
-    # Extrair mesh por classe
     print("Extraindo meshes por classe...")
     generated = []
     for cls_id, cls_info in TUMOR_CLASSES.items():
         out_path = out_dir / cls_info["obj"]
-        ok = extract_class_mesh(mask_3d, cls_id, center, scale, out_path, input_path.name)
+        ok = extract_class_mesh(mask_3d, cls_id, center, scale, upsample_factor, out_path, input_path.name)
         if ok:
             generated.append(cls_info["name"])
 
