@@ -122,6 +122,23 @@ impl App {
             // Limpar erro de inferencia anterior (permite nova tentativa)
             self.python_env_error = None;
 
+            // Validar arquivo: rejeitar resource forks macOS (._*) e arquivos invisiveis
+            let filename = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if filename.starts_with("._") || filename.starts_with('.') {
+                self.python_env_error = Some(format!(
+                    "Arquivo invalido: '{}'. Selecione um .nii.gz sem prefixo '._'.",
+                    filename
+                ));
+                self.show_home = true;
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
+
             // Verificar ambiente Python na primeira vez
             if !self.python_env_checked {
                 self.python_env_checked = true;

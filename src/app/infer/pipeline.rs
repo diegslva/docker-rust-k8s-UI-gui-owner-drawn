@@ -99,12 +99,14 @@ pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg
             }
         };
 
-        // Drena stderr em thread separada para prevenir deadlock de pipe
+        // Drena stderr em thread separada para prevenir deadlock de pipe.
+        // Le como bytes brutos e converte com lossy — stderr do ONNX Runtime
+        // contem wide-char Windows que nao e UTF-8 valido.
         let stderr_handle = child.stderr.take().map(|mut stderr| {
             std::thread::spawn(move || {
-                let mut buf = String::new();
-                let _ = std::io::Read::read_to_string(&mut stderr, &mut buf);
-                buf
+                let mut raw = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut stderr, &mut raw);
+                String::from_utf8_lossy(&raw).into_owned()
             })
         });
 
@@ -138,7 +140,13 @@ pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg
         // Espera o processo terminar e envia resultado final
         let success = match child.wait() {
             Ok(status) => {
+                info!(
+                    code = ?status.code(),
+                    stderr_len = stderr_text.len(),
+                    "subprocess Python encerrou"
+                );
                 if !status.success() {
+                    // Filtra warnings irrelevantes do ONNX CUDA provider
                     let relevant_lines: Vec<&str> = stderr_text
                         .lines()
                         .filter(|l| {
@@ -147,16 +155,25 @@ pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg
                                 && !l.contains("pybind_state")
                                 && !l.contains("CreateExecutionProviderFactory")
                                 && !l.contains("onnxruntime_providers_cuda")
+                                && !l.contains("TryGetProviderInfo")
+                                && !l.contains("[W:onnxruntime")
+                                && !l.contains("[E:onnxruntime")
                         })
                         .collect();
-                    let err_summary = relevant_lines
-                        .last()
-                        .copied()
-                        .unwrap_or("erro desconhecido no subprocess Python")
-                        .to_string();
+                    let err_summary = if relevant_lines.is_empty() {
+                        // Todas as linhas foram warnings CUDA — o erro real pode estar no stdout
+                        format!(
+                            "Python exit code {}. Possivel erro de memoria ou arquivo invalido.",
+                            status.code().unwrap_or(-1)
+                        )
+                    } else {
+                        relevant_lines.last().copied().unwrap_or("erro").to_string()
+                    };
                     warn!(
                         code = ?status.code(),
-                        stderr = %err_summary,
+                        stderr_lines = relevant_lines.len(),
+                        stderr_total = stderr_text.lines().count(),
+                        error = %err_summary,
                         "subprocess Python terminou com erro"
                     );
                     let _ = tx.send(InferMsg::Phase(InferPhase::Error(err_summary)));
