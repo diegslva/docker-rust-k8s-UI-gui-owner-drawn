@@ -68,6 +68,7 @@ impl Prim2DBatch {
     }
 
     /// Retangulo preenchido em coordenadas de pixel.
+    #[allow(clippy::too_many_arguments)]
     pub fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, col: [f32; 4], sw: f32, sh: f32) {
         let tl = Self::px_to_ndc(x, y, sw, sh);
         let tr = Self::px_to_ndc(x + w, y, sw, sh);
@@ -77,6 +78,7 @@ impl Prim2DBatch {
     }
 
     /// Linha renderizada como quad fino em coordenadas de pixel.
+    #[allow(clippy::too_many_arguments)]
     pub fn line(
         &mut self,
         x1: f32,
@@ -145,11 +147,15 @@ pub struct GpuState {
     camera_bind_group_layout: BindGroupLayout,
     camera_buffer: Buffer,
     camera_bind_group: BindGroup,
+    /// Primitivas de cena (callout lines, boxes, separadores)
     prim_vert_buf: Buffer,
     prim_idx_buf: Buffer,
+    /// Primitivas de overlay (menu bar + dropdown) — renderizadas APÓS o texto de cena
+    overlay_prim_vert_buf: Buffer,
+    overlay_prim_idx_buf: Buffer,
     depth_texture: Texture,
     size: PhysicalSize<u32>,
-    // Texto
+    // Texto de cena (callouts, título, painel lateral)
     font_system: FontSystem,
     swash_cache: SwashCache,
     #[allow(dead_code)]
@@ -157,6 +163,9 @@ pub struct GpuState {
     viewport: Viewport,
     text_atlas: TextAtlas,
     text_renderer: TextRenderer,
+    // Texto de overlay (itens do menu dropdown) — renderizado sobre o overlay de primitivas
+    menu_text_atlas: TextAtlas,
+    menu_text_renderer: TextRenderer,
 }
 
 impl GpuState {
@@ -279,6 +288,20 @@ impl GpuState {
             Self::build_pipeline_3d(&device, &config, &camera_bind_group_layout, true);
         let pipeline_2d_prim = Self::build_pipeline_2d_prim(&device, &config);
 
+        // Buffers dinâmicos para primitivas de overlay (menu bar + dropdown)
+        let overlay_prim_vert_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("overlay_prim_vert_buf"),
+            size: (MAX_PRIM_VERTS * std::mem::size_of::<VertexPrim>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let overlay_prim_idx_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("overlay_prim_idx_buf"),
+            size: (MAX_PRIM_IDXS * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let mut font_system = FontSystem::new();
         font_system.db_mut().load_font_data(FONT_REGULAR.to_vec());
         font_system.db_mut().load_font_data(FONT_BOLD.to_vec());
@@ -286,6 +309,8 @@ impl GpuState {
         let swash_cache = SwashCache::new();
         let cache = Cache::new(&device);
         let viewport = Viewport::new(&device, &cache);
+
+        // Renderer de cena (callouts, título, painel)
         let mut text_atlas = TextAtlas::new(&device, &queue, &cache, surface_format);
         let text_renderer = TextRenderer::new(
             &mut text_atlas,
@@ -300,7 +325,22 @@ impl GpuState {
             }),
         );
 
-        info!("GpuState: pipeline 2D + 3D opaque + 3D alpha + prim2D + texto");
+        // Renderer de overlay (itens do dropdown) — renderizado APÓS texto de cena
+        let mut menu_text_atlas = TextAtlas::new(&device, &queue, &cache, surface_format);
+        let menu_text_renderer = TextRenderer::new(
+            &mut menu_text_atlas,
+            &device,
+            wgpu::MultisampleState::default(),
+            Some(DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+        );
+
+        info!("GpuState: pipeline 2D + 3D opaque + 3D alpha + prim2D + texto + overlay");
 
         Ok(Self {
             surface,
@@ -316,6 +356,8 @@ impl GpuState {
             camera_bind_group,
             prim_vert_buf,
             prim_idx_buf,
+            overlay_prim_vert_buf,
+            overlay_prim_idx_buf,
             depth_texture,
             size,
             font_system,
@@ -324,6 +366,8 @@ impl GpuState {
             viewport,
             text_atlas,
             text_renderer,
+            menu_text_atlas,
+            menu_text_renderer,
         })
     }
 
@@ -351,20 +395,31 @@ impl GpuState {
 
     /// Renderiza um frame.
     ///
-    /// Ordem de draw calls:
+    /// Ordem de draw calls (dois render passes, mesmo encoder):
+    ///
+    /// Pass 1 — cena (LoadOp::Clear):
     ///   1. Gradiente 2D (fundo)
     ///   2. Meshes 3D opacas (tumores)
-    ///   3. Meshes 3D transparentes (cerebro)
-    ///   4. Primitivas 2D (callout lines, boxes, separadores)
-    ///   5. Texto (glyphon)
+    ///   3. Meshes 3D transparentes (cérebro)
+    ///   4. Primitivas de cena (callout lines, boxes, separadores)
+    ///   5. Texto de cena (callouts, título, painel)
+    ///
+    /// Pass 2 — overlay (LoadOp::Load — preserva o frame do Pass 1):
+    ///   6. Primitivas de overlay (menu bar + dropdown bg/hover)
+    ///   7. Texto de overlay (itens do dropdown)
+    ///
+    /// Isso garante z-order correto: todo o menu fica acima de qualquer texto
+    /// de cena, independente da ordem de construção dos labels.
     pub fn render(
         &mut self,
         camera_uniform: &CameraUniform,
         meshes: &[MeshEntry<'_>],
         labels: &[&Label],
         primitives: &Prim2DBatch,
+        overlay_prims: &Prim2DBatch,
+        overlay_labels: &[&Label],
     ) -> Result<()> {
-        // Escrever uniforms por mesh
+        // ── Uniforms por mesh ──────────────────────────────────────────────────
         for (i, entry) in meshes.iter().enumerate() {
             debug_assert!(i < MAX_MESHES);
             let mut u = *camera_uniform;
@@ -378,7 +433,7 @@ impl GpuState {
                 .write_buffer(&self.camera_buffer, (i * UNIFORM_ALIGN) as u64, &slot);
         }
 
-        // Upload primitivas 2D
+        // ── Upload primitivas de cena ──────────────────────────────────────────
         if !primitives.is_empty() {
             let vb_size = MAX_PRIM_VERTS * std::mem::size_of::<VertexPrim>();
             let ib_size = MAX_PRIM_IDXS * std::mem::size_of::<u32>();
@@ -396,6 +451,26 @@ impl GpuState {
             self.queue.write_buffer(&self.prim_idx_buf, 0, &ib_buf);
         }
 
+        // ── Upload primitivas de overlay ───────────────────────────────────────
+        if !overlay_prims.is_empty() {
+            let vb_size = MAX_PRIM_VERTS * std::mem::size_of::<VertexPrim>();
+            let ib_size = MAX_PRIM_IDXS * std::mem::size_of::<u32>();
+
+            let vb_bytes = cast_slice::<VertexPrim, u8>(&overlay_prims.verts);
+            let mut vb_buf = vec![0u8; vb_size];
+            let vb_len = vb_bytes.len().min(vb_size);
+            vb_buf[..vb_len].copy_from_slice(&vb_bytes[..vb_len]);
+            self.queue
+                .write_buffer(&self.overlay_prim_vert_buf, 0, &vb_buf);
+
+            let ib_bytes = cast_slice::<u32, u8>(&overlay_prims.indices);
+            let mut ib_buf = vec![0u8; ib_size];
+            let ib_len = ib_bytes.len().min(ib_size);
+            ib_buf[..ib_len].copy_from_slice(&ib_bytes[..ib_len]);
+            self.queue
+                .write_buffer(&self.overlay_prim_idx_buf, 0, &ib_buf);
+        }
+
         self.viewport.update(
             &self.queue,
             Resolution {
@@ -404,7 +479,8 @@ impl GpuState {
             },
         );
 
-        let text_areas: Vec<TextArea> = labels
+        // ── Preparar texto de cena ─────────────────────────────────────────────
+        let scene_areas: Vec<TextArea> = labels
             .iter()
             .map(|l| l.as_text_area(self.config.width, self.config.height))
             .collect();
@@ -427,10 +503,40 @@ impl GpuState {
                     font_system,
                     text_atlas,
                     viewport,
-                    text_areas,
+                    scene_areas,
                     swash_cache,
                 )
-                .context("falha ao preparar texto")?;
+                .context("falha ao preparar texto de cena")?;
+        }
+
+        // ── Preparar texto de overlay ──────────────────────────────────────────
+        let overlay_areas: Vec<TextArea> = overlay_labels
+            .iter()
+            .map(|l| l.as_text_area(self.config.width, self.config.height))
+            .collect();
+
+        {
+            let GpuState {
+                menu_text_renderer,
+                device,
+                queue,
+                font_system,
+                menu_text_atlas,
+                viewport,
+                swash_cache,
+                ..
+            } = self;
+            menu_text_renderer
+                .prepare(
+                    device,
+                    queue,
+                    font_system,
+                    menu_text_atlas,
+                    viewport,
+                    overlay_areas,
+                    swash_cache,
+                )
+                .context("falha ao preparar texto de overlay")?;
         }
 
         let output = match self.surface.get_current_texture() {
@@ -452,9 +558,10 @@ impl GpuState {
             .device
             .create_command_encoder(&CommandEncoderDescriptor { label: Some("enc") });
 
+        // ── Pass 1: cena (Clear) ───────────────────────────────────────────────
         {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("main_pass"),
+                label: Some("scene_pass"),
                 color_attachments: &[Some(RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -496,7 +603,7 @@ impl GpuState {
                 pass.draw_indexed(0..entry.mesh.index_count, 0, 0..1);
             }
 
-            // 3. Meshes TRANSPARENTES (cerebro)
+            // 3. Meshes TRANSPARENTES (cérebro)
             pass.set_pipeline(&self.pipeline_3d_alpha);
             for (i, entry) in meshes.iter().enumerate() {
                 if entry.alpha >= 1.0 {
@@ -508,7 +615,7 @@ impl GpuState {
                 pass.draw_indexed(0..entry.mesh.index_count, 0, 0..1);
             }
 
-            // 4. Primitivas 2D (callout lines + box backgrounds)
+            // 4. Primitivas de cena (callout lines + box backgrounds)
             if !primitives.is_empty() {
                 pass.set_pipeline(&self.pipeline_2d_prim);
                 pass.set_vertex_buffer(0, self.prim_vert_buf.slice(..));
@@ -516,15 +623,57 @@ impl GpuState {
                 pass.draw_indexed(0..primitives.index_count() as u32, 0, 0..1);
             }
 
-            // 5. Texto overlay
+            // 5. Texto de cena (callouts, título, painel)
             self.text_renderer
                 .render(&self.text_atlas, &self.viewport, &mut pass)
-                .context("falha ao renderizar texto")?;
+                .context("falha ao renderizar texto de cena")?;
+        }
+
+        // ── Pass 2: overlay (Load — preserva o frame do Pass 1) ───────────────
+        {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("overlay_pass"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Load,
+                        store: StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(Operations {
+                        load: LoadOp::Load,
+                        store: StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            // 6. Primitivas de overlay (menu bar + dropdown bg/hover)
+            if !overlay_prims.is_empty() {
+                pass.set_pipeline(&self.pipeline_2d_prim);
+                pass.set_vertex_buffer(0, self.overlay_prim_vert_buf.slice(..));
+                pass.set_index_buffer(
+                    self.overlay_prim_idx_buf.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
+                pass.draw_indexed(0..overlay_prims.index_count() as u32, 0, 0..1);
+            }
+
+            // 7. Texto de overlay (itens do dropdown)
+            self.menu_text_renderer
+                .render(&self.menu_text_atlas, &self.viewport, &mut pass)
+                .context("falha ao renderizar texto de overlay")?;
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
         self.text_atlas.trim();
+        self.menu_text_atlas.trim();
         Ok(())
     }
 

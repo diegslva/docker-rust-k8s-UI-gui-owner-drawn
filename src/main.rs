@@ -226,6 +226,7 @@ impl App {
     // Carregamento de meshes de tumor para o caso atual
     // -----------------------------------------------------------------------
 
+    #[allow(dead_code)]
     fn load_tumor_meshes(&mut self, case_id: &str) {
         let case_dir = format!("{}/{}", CASES_DIR, case_id);
         let defs = [
@@ -332,6 +333,7 @@ impl App {
     fn col_section() -> Color {
         Color::rgb(71, 85, 105)
     }
+    #[allow(dead_code)]
     fn col_sep() -> [f32; 4] {
         [0.12, 0.17, 0.26, 0.70]
     }
@@ -353,7 +355,7 @@ impl App {
 
         let mut sub = Label::new(
             fs,
-            "Visualizador Medico 3D",
+            "Visualizador Médico 3D",
             15.5,
             Color::rgb(88, 128, 168),
             0.0,
@@ -545,7 +547,7 @@ impl App {
         let w = size.width as f32;
         let h = size.height as f32;
         let y_ct = h * 0.14;
-        let box_w = (w * 0.175).max(190.0).min(240.0);
+        let box_w = (w * 0.175).clamp(190.0, 240.0);
         let box_h = 92.0_f32;
         let pad = 12.0_f32;
         // Posição interpolada do canto do box SNFH
@@ -639,7 +641,7 @@ impl App {
 
         // ── Subtítulo ────────────────────────────────────────────────────────
         let sub_text = if self.scan.case_id.is_empty() {
-            "Visualizador Medico 3D  \u{00B7}  Arraste para girar  \u{00B7}  Scroll para zoom  \u{00B7}  I para painel  \u{00B7}  \u{2190}\u{2192} para navegar".to_string()
+            "Visualizador Médico 3D  \u{00B7}  Arraste para girar  \u{00B7}  Scroll para zoom  \u{00B7}  I para painel  \u{00B7}  \u{2190}\u{2192} para navegar".to_string()
         } else {
             format!(
                 "{}  \u{00B7}  {}  \u{00B7}  {}  \u{00B7}  I para painel  \u{00B7}  \u{2190}\u{2192} para navegar",
@@ -655,7 +657,7 @@ impl App {
 
         // ── Callouts ─────────────────────────────────────────────────────────
         let y_ct = h * 0.14;
-        let box_w = (w * 0.175).max(190.0).min(240.0);
+        let box_w = (w * 0.175).clamp(190.0, 240.0);
         let _box_h = 92.0_f32;
         let pad = 12.0_f32;
 
@@ -691,7 +693,7 @@ impl App {
             }
             always.push(Label::new(
                 fs,
-                "Realce pos-contraste · barreira comprometida",
+                "Realce pós-contraste · barreira comprometida",
                 8.8,
                 col_micro,
                 ex + pad,
@@ -718,7 +720,7 @@ impl App {
             snfh.push(Label::new_bold(fs, &vol_str, 13.0, Color::WHITE, 0.0, 0.0));
             snfh.push(Label::new(
                 fs,
-                "Edema e infiltracao peritumoral",
+                "Edema e infiltração peritumoral",
                 8.8,
                 col_micro,
                 0.0,
@@ -755,7 +757,7 @@ impl App {
             }
             always.push(Label::new(
                 fs,
-                "Nucleo necrotico hipóxico · centro da lesao",
+                "Núcleo necrótico hipóxico · centro da lesão",
                 8.8,
                 col_micro,
                 nx + pad,
@@ -864,9 +866,9 @@ impl App {
         };
         let nav_val = format!("{} / {}", self.current_case + 1, TOP_CASES.len());
 
-        section!("ANALISE VOLUMETRICA");
+        section!("ANÁLISE VOLUMÉTRICA");
         kv!("Caso", &case_val);
-        kv!("Navegacao", &nav_val);
+        kv!("Navegação", &nav_val);
         kv!("Protocolo", &dataset_val);
         if !self.scan.modalities.is_empty() {
             panel.push(Label::new(fs, "Modalidades", 10.0, Self::col_dim(), pl, py));
@@ -889,16 +891,16 @@ impl App {
             ));
             py += 16.0;
         }
-        kv!("Metodo", "nnUNet 2D Slice");
-        kv!("Acuracia", "Dice  0.865");
+        kv!("Método", "nnUNet 2D Slice");
+        kv!("Acurácia", "Dice  0.865");
         py += 8.0;
 
-        section!("CLASSIFICACAO TUMORAL");
+        section!("CLASSIFICAÇÃO TUMORAL");
         line_text!("WHO 2021  ·  Grau IV", Self::col_value(), 11.0);
         line_text!("Glioblastoma Multiforme", Self::col_header(), 11.5);
         py += 6.0;
 
-        section!("RISCO CLINICO");
+        section!("RISCO CLÍNICO");
         kv!("Grau WHO", "IV  —  Alto Risco");
         kv!("IDH Status", "Wild-type (wt)");
         kv!("MGMT Metil.", "A investigar");
@@ -908,7 +910,7 @@ impl App {
         py += 3.0;
         panel.push(Label::new(
             fs,
-            "* Dados pop. BraTS 2021. Nao substitui laudo.",
+            "* Dados pop. BraTS 2021. Não substitui laudo.",
             8.5,
             Self::col_section(),
             pl,
@@ -944,7 +946,7 @@ impl App {
         py += 15.0;
         panel.push(Label::new(
             fs,
-            "\u{25CF}  NETC  Nucleo necrotico",
+            "\u{25CF}  NETC  Núcleo necrótico",
             10.5,
             Self::rgb_f(NETC_COLOR),
             pl,
@@ -971,16 +973,16 @@ impl App {
         py += 22.0;
 
         section!("METODOLOGIA");
-        kv!("Segmentacao", "nnUNet 2D Slice");
+        kv!("Segmentação", "nnUNet 2D Slice");
         kv!("Treinamento", "484 casos BraTS 2021");
-        kv!("Acuracia", "Dice 0.865");
+        kv!("Acurácia", "Dice 0.865");
         kv!("Modalidades", "FLAIR/T1w/T1ce/T2w");
-        kv!("Resolucao", "1mm isotropico");
+        kv!("Resolução", "1mm isotrópico");
         kv!("Referência", "WHO CNS 2021");
         py += 4.0;
         panel.push(Label::new(
             fs,
-            "Inferencia slice-a-slice com 4",
+            "Inferência slice-a-slice com 4",
             9.5,
             Self::col_dim(),
             pl,
@@ -1015,6 +1017,7 @@ impl App {
     // Primitivas 2D
     // -----------------------------------------------------------------------
 
+    #[allow(clippy::too_many_arguments)]
     fn build_primitives(
         &self,
         mvp: &[[f32; 4]; 4],
@@ -1027,7 +1030,7 @@ impl App {
     ) -> Prim2DBatch {
         let mut b = Prim2DBatch::new();
         let y_ct = h * 0.14;
-        let box_w = (w * 0.175).max(190.0).min(240.0);
+        let box_w = (w * 0.175).clamp(190.0, 240.0);
         let box_h = 92.0_f32;
         let bg = [0.04, 0.06, 0.11, 0.92_f32];
         // Overlay interno sutil — frosted glass imperceptível que separa o texto do fundo
@@ -1289,8 +1292,19 @@ impl App {
             }
         }
 
-        // ── Menu bar — renderizada por último: fica sobre tudo ────────────────
-        // Fundo e separador inferior
+        b
+    }
+
+    /// Constrói o batch de overlay do menu bar.
+    ///
+    /// Separado de `build_primitives` para que o menu bar + dropdown sejam
+    /// renderizados num render pass distinto (Pass 2), **após** o texto de
+    /// cena do Pass 1 — garantindo z-order correto sem que callouts ou títulos
+    /// apareçam sobre o dropdown.
+    fn build_menu_overlay(&self, w: f32, h: f32) -> Prim2DBatch {
+        let mut b = Prim2DBatch::new();
+
+        // Fundo da barra e separador inferior
         b.rect(0.0, 0.0, w, MENU_BAR_H, [0.04, 0.06, 0.12, 0.97], w, h);
         b.rect(
             0.0,
@@ -1322,7 +1336,7 @@ impl App {
             let drop_h = self.dropdown_height(self.menu_open);
             let entries = self.build_menu_entries(self.menu_open);
 
-            // Fundo e bordas
+            // Fundo e bordas do dropdown
             b.rect(
                 drop_x,
                 MENU_BAR_H,
@@ -1369,7 +1383,7 @@ impl App {
                 h,
             );
 
-            // Items e separadores
+            // Itens e separadores
             let mut iy = MENU_BAR_H;
             for (idx, (_, _, is_sep)) in entries.iter().enumerate() {
                 if *is_sep {
@@ -1529,7 +1543,10 @@ impl ApplicationHandler for App {
             // Usar labels da splash já construídas acima
             let label_refs: Vec<&Label> = self.splash_labels.iter().collect();
             if let Some(gpu) = &mut self.gpu {
-                if let Err(e) = gpu.render(&cam, &[], &label_refs, &first_prims) {
+                let empty_overlay = Prim2DBatch::new();
+                if let Err(e) =
+                    gpu.render(&cam, &[], &label_refs, &first_prims, &empty_overlay, &[])
+                {
                     warn!(error = %e, "erro no frame inicial da splash");
                 }
             }
@@ -1917,7 +1934,10 @@ impl ApplicationHandler for App {
                         let prims = self.build_splash_primitives(sw, sh);
                         let label_refs: Vec<&Label> = self.splash_labels.iter().collect();
                         if let Some(gpu) = &mut self.gpu {
-                            if let Err(e) = gpu.render(&cam, &[], &label_refs, &prims) {
+                            let empty_overlay = Prim2DBatch::new();
+                            if let Err(e) =
+                                gpu.render(&cam, &[], &label_refs, &prims, &empty_overlay, &[])
+                            {
                                 warn!(error = %e, "erro render splash");
                             }
                         }
@@ -1949,7 +1969,10 @@ impl ApplicationHandler for App {
                                     alpha: m.alpha,
                                 })
                                 .collect();
-                            if let Err(e) = gpu.render(&cam, &entries, &label_refs, &prims) {
+                            let empty_overlay = Prim2DBatch::new();
+                            if let Err(e) =
+                                gpu.render(&cam, &entries, &label_refs, &prims, &empty_overlay, &[])
+                            {
                                 warn!(error = %e, "erro render fade-out splash");
                             }
                         }
@@ -2173,24 +2196,32 @@ impl ApplicationHandler for App {
 
                 let cam = self.camera.build_uniform(size.width, size.height);
                 let infer = self.infer_active;
+                let sw = size.width as f32;
+                let sh = size.height as f32;
                 let prims = self.build_primitives(
                     &cam.mvp,
-                    size.width as f32,
-                    size.height as f32,
+                    sw,
+                    sh,
                     self.pulse_t,
                     self.transition_phase,
                     self.spinner_angle,
                     infer,
                 );
+                let overlay_prims = self.build_menu_overlay(sw, sh);
 
+                // Texto de cena: callouts, título, painel lateral
                 let mut label_refs: Vec<&Label> = self.labels_always.iter().collect();
                 label_refs.extend(self.labels_snfh.iter());
                 if self.show_panel {
                     label_refs.extend(self.labels_panel.iter());
                 }
-                if self.menu_open >= 0 {
-                    label_refs.extend(self.labels_menu.iter());
-                }
+
+                // Texto de overlay: itens do dropdown (Pass 2, acima do texto de cena)
+                let overlay_label_refs: Vec<&Label> = if self.menu_open >= 0 {
+                    self.labels_menu.iter().collect()
+                } else {
+                    Vec::new()
+                };
 
                 if let Some(gpu) = &mut self.gpu {
                     let entries: Vec<MeshEntry> = self
@@ -2202,7 +2233,14 @@ impl ApplicationHandler for App {
                             alpha: m.alpha,
                         })
                         .collect();
-                    if let Err(e) = gpu.render(&cam, &entries, &label_refs, &prims) {
+                    if let Err(e) = gpu.render(
+                        &cam,
+                        &entries,
+                        &label_refs,
+                        &prims,
+                        &overlay_prims,
+                        &overlay_label_refs,
+                    ) {
                         warn!(error = %e, "erro no render");
                     }
                 }
