@@ -44,7 +44,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let intensity = ambient + diffuse + fill;
 
-    // Cor de osso: marfim levemente amarelado
-    let bone_color = vec3<f32>(0.91, 0.87, 0.78);
-    return vec4<f32>(bone_color * intensity, 1.0);
+    // Cor de tecido cerebral: cinza rosado (substancia cinzenta)
+    let brain_color = vec3<f32>(0.82, 0.72, 0.70);
+    return vec4<f32>(brain_color * intensity, 1.0);
 }

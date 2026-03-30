@@ -21,7 +21,7 @@ use winit::window::{CursorIcon, Icon, Window, WindowAttributes, WindowId};
 const WINDOW_WIDTH: f64 = 1280.0;
 const WINDOW_HEIGHT: f64 = 720.0;
 const ICON_BYTES: &[u8] = include_bytes!("../assets/icon_256x256.png");
-const SKULL_OBJ: &str = "assets/models/skull.obj";
+const BRAIN_OBJ: &str = "assets/models/brain.obj";
 
 /// Sensibilidade do drag de mouse (radianos por pixel).
 const MOUSE_SENSITIVITY: f32 = 0.005;
@@ -67,7 +67,7 @@ impl App {
 
         let mut title = Label::new_bold(
             fs,
-            "Fase 4A  \u{00B7}  3D Cranio",
+            "NeuroScan  \u{00B7}  Cerebro 3D (BraTS FLAIR)",
             32.0,
             Color::WHITE,
             0.0,
@@ -137,7 +137,7 @@ impl ApplicationHandler for App {
 
         let icon = load_embedded_icon().ok();
         let mut attrs = WindowAttributes::default()
-            .with_title("docker-rust-k8s-ui-gui [Phase 4A — 3D Skull]")
+            .with_title("NeuroScan [Phase 5 — Brain 3D FLAIR]")
             .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT));
         if let Some(ic) = icon {
             attrs = attrs.with_window_icon(Some(ic));
@@ -168,17 +168,17 @@ impl ApplicationHandler for App {
         self.gpu = Some(gpu);
 
         let device = &self.gpu.as_ref().unwrap().device;
-        match Mesh::from_obj(device, SKULL_OBJ) {
+        match Mesh::from_obj(device, BRAIN_OBJ) {
             Ok(m) => {
-                info!("cranio carregado com sucesso");
+                info!("cerebro carregado com sucesso");
                 self.mesh = Some(m);
             }
-            Err(err) => warn!(error = %err, "falha ao carregar skull.obj"),
+            Err(err) => warn!(error = %err, "falha ao carregar brain.obj"),
         }
 
-        // Camera centrada no cranio, afastada para caber na tela
-        self.camera.target = glam::Vec3::new(0.0, 2.5, 0.0);
-        self.camera.distance = 9.0;
+        // Camera centrada no cerebro — mesh normalizado em [-1, 1]
+        self.camera.target = glam::Vec3::ZERO;
+        self.camera.distance = 4.0;
 
         let size = window.inner_size();
         self.build_labels(size);
