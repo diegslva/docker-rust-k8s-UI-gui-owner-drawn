@@ -884,8 +884,31 @@ impl ApplicationHandler for App {
         self.camera.distance = 4.0;
         self.last_frame       = Instant::now();
         self.last_interaction = Instant::now();
+
+        // Renderizar um frame escuro ANTES de mostrar a janela:
+        // with_visible(false) + render síncrono + set_visible(true)
+        // elimina o flash branco do OS antes do primeiro frame wgpu.
+        // Nota: janelas invisíveis no Windows não recebem RedrawRequested,
+        // por isso forçamos o primeiro render aqui, fora do loop de eventos.
+        self.window = Some(Arc::clone(&window));
+        {
+            let cam = self.camera.build_uniform(size.width, size.height);
+            let sw  = size.width  as f32;
+            let sh  = size.height as f32;
+            let mut first_prims = Prim2DBatch::new();
+            // Fundo escuro idêntico ao da splash
+            first_prims.rect(0.0, 0.0, sw, sh, [0.03, 0.04, 0.08, 1.0], sw, sh);
+            // Usar labels da splash já construídas acima
+            let label_refs: Vec<&Label> = self.splash_labels.iter().collect();
+            if let Some(gpu) = &mut self.gpu {
+                if let Err(e) = gpu.render(&cam, &[], &label_refs, &first_prims) {
+                    warn!(error = %e, "erro no frame inicial da splash");
+                }
+            }
+        }
+        window.set_visible(true);
+        self.window_shown = true;
         window.request_redraw();
-        self.window = Some(window);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
