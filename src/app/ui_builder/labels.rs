@@ -446,4 +446,89 @@ impl App {
         self.labels_snfh = snfh;
         self.labels_menu_bar = menu_bar;
     }
+
+    /// Constroi os labels da tela de inferencia.
+    ///
+    /// Chamado a cada frame durante inferencia ativa — o contador de fatias
+    /// muda rapido e precisa ser refletido nos labels.
+    pub(crate) fn build_infer_labels(&mut self, size: PhysicalSize<u32>) {
+        let progress = self.infer_progress.clone().unwrap_or_default();
+        let Some(gpu) = &mut self.gpu else { return };
+        let w = size.width as f32;
+        let h = size.height as f32;
+        let fs = gpu.font_system_mut();
+
+        let mut labels: Vec<Label> = Vec::new();
+
+        // Titulo centralizado
+        let mut title = Label::new_bold(fs, "NeuroScan AI", 36.0, col_header(), 0.0, 0.0);
+        title.x = (w - title.measured_width()) / 2.0;
+        title.y = h * 0.15;
+        labels.push(title);
+
+        // Subtitulo
+        let mut sub = Label::new(
+            fs,
+            "Processando volume MRI",
+            14.0,
+            Color::rgb(148, 163, 184),
+            0.0,
+            0.0,
+        );
+        sub.x = (w - sub.measured_width()) / 2.0;
+        sub.y = h * 0.15 + 48.0;
+        labels.push(sub);
+
+        // Fase atual
+        use crate::app::infer::InferPhase;
+        let phase_text = match &progress.phase {
+            InferPhase::Preprocessing => "Carregando e normalizando volume...".to_string(),
+            InferPhase::Slicing => {
+                if progress.total_slices > 0 {
+                    format!(
+                        "Inferindo fatia {} / {}",
+                        progress.current_slice, progress.total_slices
+                    )
+                } else {
+                    "Iniciando inferencia...".to_string()
+                }
+            }
+            InferPhase::MarchingCubes => "Extraindo superficies 3D (Marching Cubes)...".to_string(),
+            InferPhase::Done => "Concluido".to_string(),
+            InferPhase::Error(e) => format!("Erro: {}", e),
+        };
+
+        let cy = h * 0.72;
+        let mut phase_lbl =
+            Label::new_bold(fs, &phase_text, 14.0, Color::rgb(200, 212, 232), 0.0, 0.0);
+        phase_lbl.x = (w - phase_lbl.measured_width()) / 2.0;
+        phase_lbl.y = cy;
+        labels.push(phase_lbl);
+
+        // Tempo decorrido
+        let elapsed = format!("{:.0}s", progress.elapsed_secs);
+        let mut elapsed_lbl = Label::new(fs, &elapsed, 11.0, col_dim(), 0.0, 0.0);
+        elapsed_lbl.x = (w - elapsed_lbl.measured_width()) / 2.0;
+        elapsed_lbl.y = cy + 24.0;
+        labels.push(elapsed_lbl);
+
+        // Volumes parciais (aparecem conforme o Python reporta)
+        let vol_y = h * 0.80;
+        let vol_items = [
+            ("ET", progress.et_volume_ml, ET_COLOR),
+            ("SNFH", progress.snfh_volume_ml, SNFH_COLOR),
+            ("NETC", progress.netc_volume_ml, NETC_COLOR),
+        ];
+        for (i, (name, ml, color)) in vol_items.iter().enumerate() {
+            if *ml > 0.0 {
+                let text = format!("\u{25CF}  {}  {:.1} mL", name, ml);
+                let mut lbl = Label::new(fs, &text, 12.0, rgb_f(*color), 0.0, 0.0);
+                lbl.x = (w - 120.0) / 2.0;
+                lbl.y = vol_y + i as f32 * 22.0;
+                labels.push(lbl);
+            }
+        }
+
+        self.infer_labels = labels;
+    }
 }

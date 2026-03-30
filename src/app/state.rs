@@ -143,7 +143,9 @@ pub(crate) struct App {
     // Inferência real — file picker + subprocess Python
     pub(crate) dialog_rx: Option<mpsc::Receiver<std::path::PathBuf>>,
     pub(crate) infer_active: bool,
-    pub(crate) infer_rx: Option<mpsc::Receiver<bool>>,
+    pub(crate) infer_rx: Option<mpsc::Receiver<crate::app::infer::InferMsg>>,
+    pub(crate) infer_progress: Option<crate::app::infer::InferProgress>,
+    pub(crate) infer_labels: Vec<Label>,
     // Navegação entre casos
     pub(crate) current_case: usize,
     // Animação de transição entre casos
@@ -187,6 +189,8 @@ impl App {
             dialog_rx: None,
             infer_active: false,
             infer_rx: None,
+            infer_progress: None,
+            infer_labels: Vec::new(),
             current_case: 0,
             transition_phase: 0.0,
             transition_target: 0,

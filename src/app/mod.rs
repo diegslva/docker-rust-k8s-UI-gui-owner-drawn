@@ -1,3 +1,4 @@
+pub(crate) mod infer;
 mod input;
 mod menu;
 mod projection;
