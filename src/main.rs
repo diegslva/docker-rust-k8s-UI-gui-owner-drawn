@@ -12,6 +12,42 @@ use std::time::Instant;
 use tracing::{debug, info, warn};
 use tracing_subscriber::{EnvFilter, fmt};
 use ui::{Color, Label};
+
+/// Metadados do scan lidos de assets/models/scan_meta.json
+#[derive(Default)]
+struct ScanMeta {
+    case_id:         String,
+    dataset:         String,
+    modalities:      String,
+    model_name:      String,
+    et_volume_ml:    f32,
+    snfh_volume_ml:  f32,
+    netc_volume_ml:  f32,
+    total_volume_ml: f32,
+}
+
+impl ScanMeta {
+    fn load(path: &str) -> Self {
+        let text = match std::fs::read_to_string(path) {
+            Ok(t)  => t,
+            Err(_) => return Self::default(),
+        };
+        let v: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v)  => v,
+            Err(_) => return Self::default(),
+        };
+        Self {
+            case_id:         v["case_id"].as_str().unwrap_or("").to_string(),
+            dataset:         v["dataset"].as_str().unwrap_or("").to_string(),
+            modalities:      v["modalities"].as_str().unwrap_or("").to_string(),
+            model_name:      v["model_name"].as_str().unwrap_or("").to_string(),
+            et_volume_ml:    v["et_volume_ml"].as_f64().unwrap_or(0.0) as f32,
+            snfh_volume_ml:  v["snfh_volume_ml"].as_f64().unwrap_or(0.0) as f32,
+            netc_volume_ml:  v["netc_volume_ml"].as_f64().unwrap_or(0.0) as f32,
+            total_volume_ml: v["total_volume_ml"].as_f64().unwrap_or(0.0) as f32,
+        }
+    }
+}
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -23,19 +59,31 @@ const WINDOW_HEIGHT: f64 = 720.0;
 const ICON_BYTES: &[u8]  = include_bytes!("../assets/icon_256x256.png");
 
 // --- Meshes ---
-const BRAIN_OBJ:      &str = "assets/models/brain.obj";
+// --- Tumores (NIfTI, espaco normalizado) ---
 const TUMOR_ET_OBJ:   &str = "assets/models/tumor_et.obj";
 const TUMOR_SNFH_OBJ: &str = "assets/models/tumor_snfh.obj";
 const TUMOR_NETC_OBJ: &str = "assets/models/tumor_netc.obj";
 
+// --- Cerebro premium TurboSquid (16 partes anatomicas) ---
+const PREMIUM_DIR: &str = "assets/models/premium";
+
 // --- Cores RGB linear ---
-const BRAIN_COLOR: [f32; 3] = [0.85, 0.75, 0.73]; // cinza rosado, substancia cinzenta
+// Cerebro: cor anatomica realista (rosa-acinzentado como tecido cerebral real)
+const LH_COLOR:    [f32; 3] = [0.90, 0.72, 0.70]; // hemisferio esquerdo
+const RH_COLOR:    [f32; 3] = [0.88, 0.70, 0.68]; // hemisferio direito (ligeiramente diferente)
+const CEREB_COLOR: [f32; 3] = [0.82, 0.62, 0.60]; // cerebelo — mais escuro
+const INNER_COLOR: [f32; 3] = [0.78, 0.65, 0.72]; // estruturas internas (talamo, etc.)
+const VENTR_COLOR: [f32; 3] = [0.55, 0.72, 0.85]; // ventriculos — azul-aqua translucido
 const ET_COLOR:    [f32; 3] = [0.95, 0.18, 0.12]; // vermelho vivo
 const SNFH_COLOR:  [f32; 3] = [0.95, 0.78, 0.05]; // ambar dourado
 const NETC_COLOR:  [f32; 3] = [0.25, 0.50, 0.98]; // azul eletrico
 
-/// Alpha do cerebro — semi-transparente para o tumor aparecer por dentro.
-const BRAIN_ALPHA: f32 = 0.35;
+/// Alphas — hemisferios semi-transparentes, estruturas internas mais opacas
+const LH_ALPHA:    f32 = 0.30;
+const RH_ALPHA:    f32 = 0.30;
+const CEREB_ALPHA: f32 = 0.55;
+const INNER_ALPHA: f32 = 0.80;
+const VENTR_ALPHA: f32 = 0.45;
 
 // --- Camera ---
 const MOUSE_SENSITIVITY: f32 = 0.005;
@@ -45,20 +93,36 @@ const ZOOM_MAX:          f32 = 20.0;
 const PITCH_LIMIT:       f32 = 1.5;
 
 /// Definicao de cada mesh a carregar: (path, tint_rgb, alpha)
+/// Ordem: opacos primeiro (tumores), depois alpha (cerebro de fora para dentro)
 const MESH_DEFS: &[(&str, [f32; 3], f32)] = &[
-    (BRAIN_OBJ,      BRAIN_COLOR, BRAIN_ALPHA), // semi-transparente
+    // Tumores — opacos, renderizados primeiro no depth buffer
     (TUMOR_ET_OBJ,   ET_COLOR,    1.0),
     (TUMOR_SNFH_OBJ, SNFH_COLOR,  1.0),
     (TUMOR_NETC_OBJ, NETC_COLOR,  1.0),
+    // Estruturas internas — semi-opacas
+    (concat!("assets/models/premium/", "Ventricles.obj"),                          VENTR_COLOR, VENTR_ALPHA),
+    (concat!("assets/models/premium/", "Thalmus_and_Optic_Tract.obj"),             INNER_COLOR, INNER_ALPHA),
+    (concat!("assets/models/premium/", "Corpus_Callosum.obj"),                     INNER_COLOR, INNER_ALPHA),
+    (concat!("assets/models/premium/", "Hippocampus_and_Indusium_Griseum.obj"),    INNER_COLOR, INNER_ALPHA),
+    (concat!("assets/models/premium/", "Putamen_and_Amygdala.obj"),                INNER_COLOR, INNER_ALPHA),
+    (concat!("assets/models/premium/", "Globus_Pallidus_Externus.obj"),            INNER_COLOR, INNER_ALPHA),
+    (concat!("assets/models/premium/", "Globus_Pallidus_Internus.obj"),            INNER_COLOR, INNER_ALPHA),
+    // Cerebelo e tronco — semi-transparentes
+    (concat!("assets/models/premium/", "Cerebellum.obj"),                          CEREB_COLOR, CEREB_ALPHA),
+    (concat!("assets/models/premium/", "Medulla_and_Pons.obj"),                    CEREB_COLOR, CEREB_ALPHA),
+    // Hemisferios — camada mais externa, mais transparentes
+    (concat!("assets/models/premium/", "Left_Cerebral_Hemisphere.obj"),            LH_COLOR,    LH_ALPHA),
+    (concat!("assets/models/premium/", "Right_Cerebral_Hemisphere.obj"),           RH_COLOR,    RH_ALPHA),
 ];
 
-/// Legenda: (texto, cor) — so mostra se o mesh correspondente foi carregado.
-/// Indice i aqui corresponde ao MESH_DEFS[i+1] (pulamos o cerebro).
+/// Legenda: (texto, cor) — tumores sao os 3 primeiros MESH_DEFS.
 const LEGEND: &[(&str, [f32; 3])] = &[
     ("ET   Enhancing Tumor",     ET_COLOR),
     ("SNFH   Peritumoral Edema", SNFH_COLOR),
     ("NETC   Necrotic Core",     NETC_COLOR),
 ];
+/// Quantos dos primeiros MESH_DEFS sao tumores (para a legenda)
+const TUMOR_COUNT: usize = 3;
 
 struct LoadedMesh {
     mesh:  Mesh,
@@ -72,6 +136,7 @@ struct App {
     meshes:        Vec<LoadedMesh>,
     camera:        OrbitalCamera,
     labels:        Vec<Label>,
+    scan:          ScanMeta,
     last_frame:    Instant,
     mouse_pressed: bool,
     mouse_pos:     Option<(f64, f64)>,
@@ -83,6 +148,7 @@ impl App {
             window: None, gpu: None, meshes: Vec::new(),
             camera: OrbitalCamera::new(4.0),
             labels: Vec::new(),
+            scan: ScanMeta::load("assets/models/scan_meta.json"),
             last_frame: Instant::now(),
             mouse_pressed: false, mouse_pos: None,
         }
@@ -94,34 +160,71 @@ impl App {
         let h  = size.height as f32;
         let fs = gpu.font_system_mut();
 
+        // Paleta de cores da UI
+        let col_dim   = Color::rgb(120, 130, 148);
+        let col_value = Color::rgb(220, 228, 240);
+
+        // ── Titulo ────────────────────────────────────────────────────────
         let mut title = Label::new_bold(fs,
             "NeuroScan  \u{00B7}  Cerebro 3D + Tumor WHO 2021",
             30.0, Color::WHITE, 0.0, 0.0);
         title.x = (w - title.measured_width()) / 2.0;
         title.y = h * 0.05;
 
-        let mut sub = Label::new(fs,
-            "Predicao nnUNet  \u{00B7}  Arraste para girar  \u{00B7}  Scroll para zoom",
-            15.0, Color::rgb(140, 150, 165), 0.0, 0.0);
+        // Subtitulo: caso + modalidades reais
+        let sub_text = if self.scan.case_id.is_empty() {
+            "Arraste para girar  \u{00B7}  Scroll para zoom".to_string()
+        } else {
+            format!("{}  \u{00B7}  {}  \u{00B7}  {}  \u{00B7}  Arraste para girar  \u{00B7}  Scroll para zoom",
+                self.scan.case_id, self.scan.dataset, self.scan.modalities)
+        };
+        let mut sub = Label::new(fs, &sub_text, 14.0, col_dim, 0.0, 0.0);
         sub.x = (w - sub.measured_width()) / 2.0;
         sub.y = title.y + title.line_height() + 4.0;
 
         let mut labels = vec![title, sub];
 
-        // Legenda canto inferior esquerdo
-        let legend_font = 14.0;
-        let legend_gap  = legend_font * 1.45;
+        // ── Legenda canto inferior esquerdo com volumes reais ─────────────
+        let legend_font = 13.5;
+        let legend_gap  = legend_font * 1.6;
+        let volumes = [
+            self.scan.et_volume_ml,
+            self.scan.snfh_volume_ml,
+            self.scan.netc_volume_ml,
+        ];
         let n_visible: f32 = LEGEND.iter().enumerate()
-            .filter(|(i, _)| self.meshes.len() > i + 1)
+            .filter(|(i, _)| self.meshes.len() > *i)
             .count() as f32;
-        let legend_start_y = h * 0.97 - n_visible * legend_gap;
+        let legend_start_y = h * 0.96 - n_visible * legend_gap;
         let mut row = 0;
         for (i, (text, rgb)) in LEGEND.iter().enumerate() {
-            if self.meshes.len() <= i + 1 { continue; }
-            labels.push(Label::new(fs, text, legend_font,
+            if self.meshes.len() <= i { continue; }
+            let vol_str = if volumes[i] > 0.0 {
+                format!("{}   {:.1} mL", text, volumes[i])
+            } else {
+                text.to_string()
+            };
+            labels.push(Label::new(fs, &vol_str, legend_font,
                 Color::rgb((rgb[0]*255.0) as u8, (rgb[1]*255.0) as u8, (rgb[2]*255.0) as u8),
                 28.0, legend_start_y + row as f32 * legend_gap));
             row += 1;
+        }
+
+        // ── Painel inferior direito: volume total + modelo ─────────────────
+        let panel_x = w - 280.0;
+        let panel_font = 12.5;
+        let panel_gap  = panel_font * 1.7;
+        let panel_items: &[(&str, &str)] = &[
+            ("VOLUME TOTAL",  &format!("{:.1} mL", self.scan.total_volume_ml)),
+            ("MODELO",        &self.scan.model_name.clone()),
+            ("CLASSIFICACAO", "WHO 2021 · GBM"),
+            ("DATASET",       "BraTS 2021 · 484 casos"),
+        ];
+        let panel_start_y = h * 0.96 - (panel_items.len() as f32) * panel_gap;
+        for (j, (key, val)) in panel_items.iter().enumerate() {
+            let y = panel_start_y + j as f32 * panel_gap;
+            labels.push(Label::new(fs, key,  panel_font - 1.5, col_dim,    panel_x,        y));
+            labels.push(Label::new(fs, val,  panel_font,       col_value,  panel_x,        y + panel_font * 0.9));
         }
 
         self.labels = labels;

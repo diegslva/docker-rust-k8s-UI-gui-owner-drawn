@@ -1,0 +1,16 @@
+{
+  "case_id": "BRATS_001",
+  "dataset": "BraTS 2021",
+  "modalities": "FLAIR · T1w · T1ce · T2w",
+  "model_name": "nnUNet 4-canais",
+  "channels": 4,
+  "et_volume_ml": 53.6,
+  "snfh_volume_ml": 29.1,
+  "netc_volume_ml": 29.6,
+  "total_volume_ml": 112.3,
+  "generated": [
+    "ET",
+    "SNFH",
+    "NETC"
+  ]
+}

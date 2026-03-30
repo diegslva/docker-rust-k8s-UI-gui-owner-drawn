@@ -27,7 +27,7 @@ const FONT_BOLD:    &[u8] = include_bytes!("../assets/fonts/Inter-Bold.ttf");
 
 const DEPTH_FORMAT:  wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const UNIFORM_ALIGN: usize = 256;
-const MAX_MESHES:    usize = 8;
+const MAX_MESHES:    usize = 32;
 
 /// Propriedades de renderizacao por mesh.
 pub struct MeshEntry<'a> {

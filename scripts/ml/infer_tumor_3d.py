@@ -259,13 +259,39 @@ def main() -> None:
     print()
 
     print("Extraindo meshes por classe...")
-    generated = []
+    generated  = []
+    voxel_counts: dict[str, int] = {}
     for cls_id, cls_info in TUMOR_CLASSES.items():
         out_path = out_dir / cls_info["obj"]
         ok = extract_class_mesh(mask_3d, cls_id, center, scale, upsample_factor, out_path, input_path.name)
         if ok:
             generated.append(cls_info["name"])
+        voxel_counts[cls_info["name"]] = int((mask_3d == cls_id).sum())
 
+    # BraTS voxel spacing: 1mm isotropico -> 1 voxel = 1 mm3 = 0.001 mL
+    VOXEL_ML = 0.001
+    et_ml   = round(voxel_counts.get("ET",   0) * VOXEL_ML, 1)
+    snfh_ml = round(voxel_counts.get("SNFH", 0) * VOXEL_ML, 1)
+    netc_ml = round(voxel_counts.get("NETC", 0) * VOXEL_ML, 1)
+    total_ml = round(et_ml + snfh_ml + netc_ml, 1)
+
+    scan_meta = {
+        "case_id":         input_path.stem.replace(".nii", ""),
+        "dataset":         "BraTS 2021",
+        "modalities":      "FLAIR \u00b7 T1w \u00b7 T1ce \u00b7 T2w" if n_channels == 4 else "FLAIR",
+        "model_name":      f"nnUNet {n_channels}-canais",
+        "channels":        n_channels,
+        "et_volume_ml":    et_ml,
+        "snfh_volume_ml":  snfh_ml,
+        "netc_volume_ml":  netc_ml,
+        "total_volume_ml": total_ml,
+        "generated":       generated,
+    }
+    meta_out = out_dir / "scan_meta.json"
+    with open(meta_out, "w", encoding="utf-8") as f:
+        json.dump(scan_meta, f, indent=2, ensure_ascii=False)
+    print(f"\nMetadados salvos: {meta_out}")
+    print(f"Volumes — ET: {et_ml} mL  SNFH: {snfh_ml} mL  NETC: {netc_ml} mL  Total: {total_ml} mL")
     print(f"\nMeshes gerados: {generated}")
     print("Execute 'cargo run' para visualizar.")
 
