@@ -151,32 +151,14 @@ impl App {
         if let Some(rx) = &self.infer_rx {
             loop {
                 match rx.try_recv() {
-                    Ok(InferMsg::Slice { current, total }) => {
-                        if let Some(p) = &mut self.infer_progress {
-                            p.current_slice = current;
-                            if total > 0 {
-                                p.total_slices = total;
-                            }
-                        }
-                    }
-                    Ok(InferMsg::PartialVolume { class, volume_ml }) => {
-                        if let Some(p) = &mut self.infer_progress {
-                            match class {
-                                1 => p.et_volume_ml = volume_ml,
-                                2 => p.snfh_volume_ml = volume_ml,
-                                3 => p.netc_volume_ml = volume_ml,
-                                _ => {}
-                            }
-                        }
-                    }
-                    Ok(InferMsg::Phase(phase)) => {
-                        if let Some(p) = &mut self.infer_progress {
-                            p.phase = phase;
-                        }
-                    }
                     Ok(InferMsg::Done(ok)) => {
                         infer_done = Some(ok);
                         break;
+                    }
+                    Ok(ref msg) => {
+                        if let Some(p) = &mut self.infer_progress {
+                            p.apply(msg);
+                        }
                     }
                     Err(_) => break,
                 }
