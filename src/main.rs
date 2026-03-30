@@ -8,7 +8,7 @@ use camera::OrbitalCamera;
 use glam::{Mat4, Vec4};
 use mesh::Mesh;
 use renderer::{GpuState, MeshEntry, Prim2DBatch};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 use tracing_subscriber::{EnvFilter, fmt};
@@ -145,12 +145,13 @@ struct App {
     // Navegação entre casos
     current_case:        usize,
     // Animação de transição entre casos
-    transition_phase:    f32,   // 0 = idle; 0..1 = animando
+    transition_phase:    f32,   // 0 = idle; 0..0.5 = fade-in; 0.5..1.0 = fade-out
     transition_target:   usize,
-    transition_loaded:   bool,
+    loading_rx:          Option<mpsc::Receiver<Vec<LoadedMesh>>>,
     // Microanimações
     last_interaction:    Instant,
     pulse_t:             f32,   // tempo acumulado para o pulso (radianos)
+    spinner_angle:       f32,   // ângulo atual da cabeça do arc spinner
     last_frame:          Instant,
     mouse_pressed:       bool,
     mouse_pos:           Option<(f64, f64)>,
@@ -169,9 +170,10 @@ impl App {
             current_case:  0,
             transition_phase:  0.0,
             transition_target: 0,
-            transition_loaded: false,
+            loading_rx:        None,
             last_interaction:  Instant::now(),
             pulse_t:           0.0,
+            spinner_angle:     0.0,
             last_frame:        Instant::now(),
             mouse_pressed: false,
             mouse_pos: None,
@@ -222,14 +224,38 @@ impl App {
     }
 
     /// Inicia a transição animada para o caso no índice `target`.
+    /// O carregamento das meshes acontece em thread de fundo — sem travar o render loop.
     fn navigate_case(&mut self, dir: i32) {
         if self.transition_phase > 0.0 { return; }
-        let n = TOP_CASES.len();
+        let n    = TOP_CASES.len();
         let next = ((self.current_case as i32 + dir).rem_euclid(n as i32)) as usize;
-        self.transition_target  = next;
-        self.transition_phase   = f32::EPSILON; // inicia o ciclo
-        self.transition_loaded  = false;
-        self.last_interaction   = Instant::now();
+        self.transition_target = next;
+        self.transition_phase  = f32::EPSILON;
+        self.spinner_angle     = 0.0;
+        self.last_interaction  = Instant::now();
+
+        // Clonar o device (Arc interno do wgpu — zero custo) para a thread
+        let device   = self.gpu.as_ref().unwrap().device.clone();
+        let case_id  = TOP_CASES[next].to_string();
+        let (tx, rx) = mpsc::channel();
+
+        std::thread::spawn(move || {
+            let case_dir = format!("{}/{}", CASES_DIR, case_id);
+            let defs = [
+                (format!("{}/tumor_et.obj",   case_dir), ET_COLOR,   1.0_f32),
+                (format!("{}/tumor_snfh.obj", case_dir), SNFH_COLOR, 1.0_f32),
+                (format!("{}/tumor_netc.obj", case_dir), NETC_COLOR, 1.0_f32),
+            ];
+            let meshes: Vec<LoadedMesh> = defs.iter()
+                .filter_map(|(path, tint, alpha)| {
+                    Mesh::from_obj(&device, path).ok()
+                        .map(|m| LoadedMesh { mesh: m, tint: *tint, alpha: *alpha })
+                })
+                .collect();
+            let _ = tx.send(meshes);
+        });
+
+        self.loading_rx = Some(rx);
     }
 
     // -----------------------------------------------------------------------
@@ -457,11 +483,12 @@ impl App {
 
     fn build_primitives(
         &self,
-        mvp:       &[[f32; 4]; 4],
-        w:          f32,
-        h:          f32,
-        pulse_t:    f32,
-        transition: f32,
+        mvp:          &[[f32; 4]; 4],
+        w:             f32,
+        h:             f32,
+        pulse_t:       f32,
+        transition:    f32,
+        spinner_angle: f32,
     ) -> Prim2DBatch {
         let mut b    = Prim2DBatch::new();
         let y_ct     = h * 0.14;
@@ -530,6 +557,55 @@ impl App {
         if transition > 0.0 {
             let alpha = (transition * std::f32::consts::PI).sin() * 0.92;
             b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, alpha], w, h);
+
+            // Arc spinner — arco orbital girando no centro da tela
+            // Visível apenas enquanto o overlay está suficientemente opaco (fase 0..0.9)
+            let spinner_alpha = ((transition * std::f32::consts::PI).sin() * 1.6).min(1.0);
+            if spinner_alpha > 0.05 {
+                let cx = w / 2.0;
+                let cy = h / 2.0;
+                let r  = 36.0_f32;
+
+                // Trilha circular fina
+                let track_n = 48_usize;
+                for i in 0..track_n {
+                    let a0 = (i     as f32 / track_n as f32) * std::f32::consts::TAU;
+                    let a1 = ((i+1) as f32 / track_n as f32) * std::f32::consts::TAU;
+                    b.line(
+                        cx + r * a0.cos(), cy + r * a0.sin(),
+                        cx + r * a1.cos(), cy + r * a1.sin(),
+                        [0.18, 0.26, 0.42, 0.28 * spinner_alpha],
+                        1.0, w, h,
+                    );
+                }
+
+                // Arco com cauda — 240° de varredura, cabeça em spinner_angle
+                let arc_n    = 32_usize;
+                let arc_span = std::f32::consts::TAU * (240.0 / 360.0);
+                let tail_a   = spinner_angle - arc_span;
+                for i in 0..arc_n {
+                    let t0 = i     as f32 / arc_n as f32;
+                    let t1 = (i+1) as f32 / arc_n as f32;
+                    let a0 = tail_a + t0 * arc_span;
+                    let a1 = tail_a + t1 * arc_span;
+                    // Brilho cresce do tail (0) para a head (1) com curva suave
+                    let brightness = t0.powf(1.4);
+                    let seg_alpha  = brightness * 0.92 * spinner_alpha;
+                    b.line(
+                        cx + r * a0.cos(), cy + r * a0.sin(),
+                        cx + r * a1.cos(), cy + r * a1.sin(),
+                        [0.50 + 0.15 * brightness, 0.72 + 0.10 * brightness, 1.0, seg_alpha],
+                        2.2, w, h,
+                    );
+                }
+
+                // Ponto brilhante na cabeça do arco
+                let hx  = cx + r * spinner_angle.cos();
+                let hy  = cy + r * spinner_angle.sin();
+                let hr  = 2.8 * spinner_alpha;
+                b.rect(hx - hr, hy - hr, hr * 2.0, hr * 2.0,
+                    [0.75, 0.92, 1.0, 0.95 * spinner_alpha], w, h);
+            }
         }
 
         b
@@ -686,22 +762,48 @@ impl ApplicationHandler for App {
                 // ── Pulso dos pontos de ancoragem ──────────────────────────
                 self.pulse_t += dt;
 
-                // ── Transição de caso ──────────────────────────────────────
-                let mut rebuild_needed = false;
+                // ── Spinner: gira apenas enquanto há transição ative ────────
                 if self.transition_phase > 0.0 {
-                    self.transition_phase += dt / TRANSITION_DURATION;
+                    self.spinner_angle += dt * std::f32::consts::TAU * 0.75;
+                }
 
-                    // No meio da transição: trocar o caso
-                    if self.transition_phase >= 0.5 && !self.transition_loaded {
-                        self.transition_loaded = true;
-                        self.current_case = self.transition_target;
-                        self.load_tumor_meshes(TOP_CASES[self.current_case]);
-                        rebuild_needed = true;
+                // ── Checar se a thread de carregamento terminou ─────────────
+                let mut rebuild_needed = false;
+                let meshes_arrived = if let Some(rx) = &self.loading_rx {
+                    match rx.try_recv() {
+                        Ok(new_meshes) => {
+                            for (i, lm) in new_meshes.into_iter().enumerate() {
+                                if i < self.meshes.len() { self.meshes[i] = lm; }
+                            }
+                            for i in 0..TUMOR_COUNT {
+                                self.centroids[i] = self.meshes.get(i)
+                                    .map_or(glam::Vec3::ZERO, |m| m.mesh.centroid);
+                            }
+                            self.current_case = self.transition_target;
+                            self.scan = ScanMeta::load(
+                                &ScanMeta::case_path(TOP_CASES[self.current_case]));
+                            rebuild_needed = true;
+                            info!(case = TOP_CASES[self.current_case], "caso carregado (bg)");
+                            true
+                        }
+                        Err(_) => false,
                     }
+                } else { false };
+                if meshes_arrived { self.loading_rx = None; }
 
+                // ── Avanço da fase de transição ─────────────────────────────
+                // Fade-in (0→0.5): avança sempre.
+                // Mantém ≤ 0.5 enquanto meshes não chegaram.
+                // Fade-out (0.5→1.0): avança apenas após meshes prontas.
+                if self.transition_phase > 0.0 {
+                    let loading_done = self.loading_rx.is_none();
+                    if self.transition_phase < 0.5 || loading_done {
+                        self.transition_phase += dt / TRANSITION_DURATION;
+                    }
+                    self.transition_phase = self.transition_phase.min(if loading_done { 2.0 } else { 0.499 });
                     if self.transition_phase >= 1.0 {
                         self.transition_phase = 0.0;
-                        self.transition_loaded = false;
+                        self.spinner_angle    = 0.0;
                     }
                 }
 
@@ -713,7 +815,7 @@ impl ApplicationHandler for App {
 
                 let cam   = self.camera.build_uniform(size.width, size.height);
                 let prims = self.build_primitives(&cam.mvp, size.width as f32, size.height as f32,
-                    self.pulse_t, self.transition_phase);
+                    self.pulse_t, self.transition_phase, self.spinner_angle);
 
                 let mut label_refs: Vec<&Label> = self.labels_always.iter().collect();
                 if self.show_panel { label_refs.extend(self.labels_panel.iter()); }
