@@ -9,13 +9,37 @@ use super::nifti_loader::zscore_normalize;
 const INPUT_SIZE: usize = 256;
 
 /// Cria uma sessao ONNX Runtime a partir de um arquivo .onnx.
+///
+/// Tenta usar GPU (TensorRT > CUDA) e faz fallback para CPU automaticamente.
 pub(crate) fn create_session(model_path: &str) -> anyhow::Result<ort::session::Session> {
-    let session = ort::session::Session::builder()
-        .context("falha ao criar builder de sessao ONNX")?
+    use ort::execution_providers::{CUDAExecutionProvider, TensorRTExecutionProvider};
+    use tracing::warn;
+
+    let builder =
+        ort::session::Session::builder().context("falha ao criar builder de sessao ONNX")?;
+
+    let mut builder = match builder.with_execution_providers([
+        TensorRTExecutionProvider::default().build(),
+        CUDAExecutionProvider::default().build(),
+    ]) {
+        Ok(b) => b,
+        Err(e) => {
+            warn!(
+                "falha ao registrar GPU execution providers, usando CPU: {}",
+                e.message()
+            );
+            e.recover()
+        }
+    };
+
+    let session = builder
         .commit_from_file(model_path)
         .with_context(|| format!("falha ao carregar modelo ONNX: {}", model_path))?;
 
-    info!("sessao ONNX criada a partir de {}", model_path);
+    info!(
+        "sessao ONNX criada a partir de {} (TensorRT > CUDA > CPU fallback)",
+        model_path
+    );
 
     Ok(session)
 }
