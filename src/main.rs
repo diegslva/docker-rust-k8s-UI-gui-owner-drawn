@@ -434,6 +434,9 @@ impl App {
         let box_w = (w * 0.175).max(190.0).min(240.0);
         let pad   = 12.0_f32;
 
+        // Cor da microlegenda — mais clara que col_dim para contraste adequado no fundo escuro
+        let col_micro = Color::rgb(148, 164, 182);
+
         // ET — canto superior esquerdo
         {
             let ex = 24.0;
@@ -443,14 +446,13 @@ impl App {
             } else { String::new() };
             always.push(Label::new(fs,
                 "\u{25CF}  ET  \u{00B7}  Enhancing Tumor",
-                10.5, Self::rgb_f(ET_COLOR), ex + pad, ey + 13.0));
+                10.5, Self::rgb_f(ET_COLOR), ex + pad, ey + 20.0));
             if !vol.is_empty() {
-                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, ex + pad, ey + 30.0));
+                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, ex + pad, ey + 38.0));
             }
-            // Microlegenda clínica
             always.push(Label::new(fs,
-                "Realce pós-contraste · barreira comprometida",
-                8.8, Self::col_dim(), ex + pad, ey + 52.0));
+                "Realce pos-contraste · barreira comprometida",
+                8.8, col_micro, ex + pad, ey + 62.0));
         }
 
         // SNFH — canto superior direito
@@ -462,33 +464,31 @@ impl App {
             } else { String::new() };
             always.push(Label::new(fs,
                 "\u{25CF}  SNFH  \u{00B7}  Peritumoral Edema",
-                10.5, Self::rgb_f(SNFH_COLOR), sx + pad, sy + 13.0));
+                10.5, Self::rgb_f(SNFH_COLOR), sx + pad, sy + 20.0));
             if !vol.is_empty() {
-                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, sx + pad, sy + 30.0));
+                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, sx + pad, sy + 38.0));
             }
-            // Microlegenda clínica
             always.push(Label::new(fs,
                 "Edema e infiltracao peritumoral",
-                8.8, Self::col_dim(), sx + pad, sy + 52.0));
+                8.8, col_micro, sx + pad, sy + 62.0));
         }
 
         // NETC — centro inferior
         {
             let nx = (w / 2.0 - box_w / 2.0).max(24.0);
-            let ny = (h - 175.0).max(y_ct + 84.0 + 20.0);
+            let ny = (h - 185.0).max(y_ct + 92.0 + 20.0);
             let vol = if self.scan.netc_volume_ml > 0.0 {
                 format!("{:.1} mL", self.scan.netc_volume_ml)
             } else { String::new() };
             always.push(Label::new(fs,
                 "\u{25CF}  NETC  \u{00B7}  Necrotic Core",
-                10.5, Self::rgb_f(NETC_COLOR), nx + pad, ny + 13.0));
+                10.5, Self::rgb_f(NETC_COLOR), nx + pad, ny + 20.0));
             if !vol.is_empty() {
-                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, nx + pad, ny + 30.0));
+                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, nx + pad, ny + 38.0));
             }
-            // Microlegenda clínica
             always.push(Label::new(fs,
-                "Nucleo necrotico hipóxico · centro da lesão",
-                8.8, Self::col_dim(), nx + pad, ny + 52.0));
+                "Nucleo necrotico hipóxico · centro da lesao",
+                8.8, col_micro, nx + pad, ny + 62.0));
         }
 
         // ── Indicador de caso (centro inferior) ──────────────────────────────
@@ -660,8 +660,10 @@ impl App {
         let mut b    = Prim2DBatch::new();
         let y_ct     = h * 0.14;
         let box_w    = (w * 0.175).max(190.0).min(240.0);
-        let box_h    = 84.0_f32;  // aumentado para acomodar microlegenda clínica
-        let bg       = [0.04, 0.06, 0.11, 0.88_f32];
+        let box_h    = 92.0_f32;
+        let bg       = [0.04, 0.06, 0.11, 0.92_f32];
+        // Overlay interno sutil — frosted glass imperceptível que separa o texto do fundo
+        let inner_ov = [0.20, 0.26, 0.40, 0.09_f32];
         // Pulso: raio do ponto de ancoragem oscila suavemente
         let dot_r    = 3.5 + 1.5 * (pulse_t * std::f32::consts::TAU * PULSE_FREQ).sin().abs();
 
@@ -669,6 +671,7 @@ impl App {
         let et_x = 24.0;
         let et_y = y_ct;
         b.rect(et_x, et_y, box_w, box_h, bg, w, h);
+        b.rect(et_x, et_y + 2.0, box_w, box_h - 2.0, inner_ov, w, h);
         b.rect(et_x, et_y, box_w, 2.0, [ET_COLOR[0], ET_COLOR[1], ET_COLOR[2], 1.0], w, h);
         if let Some((cx, cy)) = Self::project_to_screen(self.centroids[0], mvp, w, h) {
             b.line(et_x + box_w, et_y + box_h * 0.5, cx, cy,
@@ -681,6 +684,7 @@ impl App {
         let snfh_x = w - box_w - 24.0;
         let snfh_y = y_ct;
         b.rect(snfh_x, snfh_y, box_w, box_h, bg, w, h);
+        b.rect(snfh_x, snfh_y + 2.0, box_w, box_h - 2.0, inner_ov, w, h);
         b.rect(snfh_x, snfh_y, box_w, 2.0, [SNFH_COLOR[0], SNFH_COLOR[1], SNFH_COLOR[2], 1.0], w, h);
         if let Some((cx, cy)) = Self::project_to_screen(self.centroids[1], mvp, w, h) {
             b.line(snfh_x, snfh_y + box_h * 0.5, cx, cy,
@@ -691,8 +695,9 @@ impl App {
 
         // NETC callout (bottom-center)
         let netc_x = (w / 2.0 - box_w / 2.0).max(24.0);
-        let netc_y = (h - 155.0).max(y_ct + box_h + 20.0);
+        let netc_y = (h - 185.0).max(y_ct + box_h + 20.0);
         b.rect(netc_x, netc_y, box_w, box_h, bg, w, h);
+        b.rect(netc_x, netc_y + 2.0, box_w, box_h - 2.0, inner_ov, w, h);
         b.rect(netc_x, netc_y, box_w, 2.0, [NETC_COLOR[0], NETC_COLOR[1], NETC_COLOR[2], 1.0], w, h);
         if let Some((cx, cy)) = Self::project_to_screen(self.centroids[2], mvp, w, h) {
             b.line(netc_x + box_w * 0.5, netc_y, cx, cy,
