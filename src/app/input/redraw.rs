@@ -119,27 +119,21 @@ impl App {
         };
 
         if let Some(path) = picked_path {
+            // Limpar erro de inferencia anterior (permite nova tentativa)
+            self.python_env_error = None;
+
             // Verificar ambiente Python na primeira vez
             if !self.python_env_checked {
                 self.python_env_checked = true;
-                match crate::app::infer::pipeline::check_python_env() {
-                    Ok(providers) => {
-                        info!(providers = %providers, "ambiente Python OK");
-                        self.python_env_error = None;
+                if let Err(msg) = crate::app::infer::pipeline::check_python_env() {
+                    warn!(error = %msg, "ambiente Python indisponivel");
+                    self.python_env_error = Some(msg);
+                    self.show_home = true;
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
                     }
-                    Err(msg) => {
-                        warn!(error = %msg, "ambiente Python indisponivel");
-                        self.python_env_error = Some(msg);
-                    }
+                    return;
                 }
-            }
-            if self.python_env_error.is_some() {
-                // Ambiente indisponível — volta para home com erro visível
-                self.show_home = true;
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
-                return;
             }
             let path_str = path.display().to_string();
             let out_dir = "assets/models/cases/BRATS_CUSTOM";
