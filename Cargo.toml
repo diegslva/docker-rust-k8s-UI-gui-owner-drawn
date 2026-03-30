@@ -37,7 +37,7 @@ rfd = "0.14"
 
 # Pipeline de inferência nativo (substitui subprocess Python)
 # load-dynamic: carrega libonnxruntime em runtime (evita static link com glibc incompatível no Jetson)
-ort = { version = "2.0.0-rc.12", features = ["load-dynamic", "cuda", "tensorrt"] }
+ort = { version = "2.0.0-rc.9", features = ["load-dynamic", "cuda", "tensorrt"] }
 ndarray = "0.16"
 nifti = { version = "0.17", features = ["ndarray_volumes"] }
 
