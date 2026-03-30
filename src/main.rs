@@ -165,6 +165,7 @@ struct App {
     last_interaction:    Instant,
     pulse_t:             f32,   // tempo acumulado para o pulso (radianos)
     spinner_angle:       f32,   // ângulo atual da cabeça do arc spinner
+    snfh_anim_t:         f32,   // 0.0 = direita (painel fechado), 1.0 = esquerda (painel aberto)
     last_frame:          Instant,
     mouse_pressed:       bool,
     mouse_pos:           Option<(f64, f64)>,
@@ -196,6 +197,7 @@ impl App {
             last_interaction:  Instant::now(),
             pulse_t:           0.0,
             spinner_angle:     0.0,
+            snfh_anim_t:       0.0,
             last_frame:        Instant::now(),
             mouse_pressed: false,
             mouse_pos: None,
@@ -432,10 +434,21 @@ impl App {
         // ── Callouts ─────────────────────────────────────────────────────────
         let y_ct  = h * 0.14;
         let box_w = (w * 0.175).max(190.0).min(240.0);
+        let box_h = 92.0_f32;
         let pad   = 12.0_f32;
 
         // Cor da microlegenda — mais clara que col_dim para contraste adequado no fundo escuro
         let col_micro = Color::rgb(148, 164, 182);
+
+        // Posição animada do SNFH: desliza suavemente entre direita (0.0) e esquerda (1.0)
+        let ease_snfh = {
+            let t = self.snfh_anim_t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)  // smoothstep
+        };
+        let snfh_right_x = w - box_w - 24.0;
+        let snfh_left_x  = 24.0_f32;
+        let snfh_right_y = y_ct;
+        let snfh_left_y  = y_ct + box_h + 12.0;  // abaixo do ET callout, lado esquerdo
 
         // ET — canto superior esquerdo
         {
@@ -455,10 +468,10 @@ impl App {
                 8.8, col_micro, ex + pad, ey + 62.0));
         }
 
-        // SNFH — canto superior direito
+        // SNFH — posição interpolada (direita → esquerda quando painel abre)
         {
-            let sx = w - box_w - 24.0;
-            let sy = y_ct;
+            let sx = snfh_right_x + (snfh_left_x - snfh_right_x) * ease_snfh;
+            let sy = snfh_right_y + (snfh_left_y - snfh_right_y) * ease_snfh;
             let vol = if self.scan.snfh_volume_ml > 0.0 {
                 format!("{:.1} mL", self.scan.snfh_volume_ml)
             } else { String::new() };
@@ -680,14 +693,20 @@ impl App {
                 [ET_COLOR[0], ET_COLOR[1], ET_COLOR[2], 0.90], w, h);
         }
 
-        // SNFH callout (top-right)
-        let snfh_x = w - box_w - 24.0;
-        let snfh_y = y_ct;
+        // SNFH callout — posição interpolada suavemente (direita → esquerda quando painel abre)
+        let ease_snfh = {
+            let t = self.snfh_anim_t.clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let snfh_x = (w - box_w - 24.0) + (24.0 - (w - box_w - 24.0)) * ease_snfh;
+        let snfh_y = y_ct + (y_ct + box_h + 12.0 - y_ct) * ease_snfh;
+        // Ponto de saída da linha de ancoragem: direita do box quando à esquerda, esquerda quando à direita
+        let snfh_line_x = snfh_x + box_w * ease_snfh;  // sai do lado direito ao animar para esquerda
         b.rect(snfh_x, snfh_y, box_w, box_h, bg, w, h);
         b.rect(snfh_x, snfh_y + 2.0, box_w, box_h - 2.0, inner_ov, w, h);
         b.rect(snfh_x, snfh_y, box_w, 2.0, [SNFH_COLOR[0], SNFH_COLOR[1], SNFH_COLOR[2], 1.0], w, h);
         if let Some((cx, cy)) = Self::project_to_screen(self.centroids[1], mvp, w, h) {
-            b.line(snfh_x, snfh_y + box_h * 0.5, cx, cy,
+            b.line(snfh_line_x, snfh_y + box_h * 0.5, cx, cy,
                 [SNFH_COLOR[0], SNFH_COLOR[1], SNFH_COLOR[2], 0.60], 1.5, w, h);
             b.rect(cx - dot_r, cy - dot_r, dot_r*2.0, dot_r*2.0,
                 [SNFH_COLOR[0], SNFH_COLOR[1], SNFH_COLOR[2], 0.90], w, h);
@@ -925,7 +944,10 @@ impl ApplicationHandler for App {
                     self.last_interaction = Instant::now();
                     match &event.logical_key {
                         Key::Character(ch) => match ch.as_str() {
-                            "i" | "I" => { self.show_panel = !self.show_panel; }
+                            "i" | "I" => {
+                                self.show_panel = !self.show_panel;
+                                // snfh_anim_t será avançado no loop de render para animar a transição
+                            }
                             "o" | "O" => {
                                 // Abrir file picker nativo em thread separada — não bloqueia o render loop
                                 if self.dialog_rx.is_none() && !self.infer_active {
@@ -1238,6 +1260,20 @@ impl ApplicationHandler for App {
                     self.gpu.as_ref().map_or(1280, |g| g.config.width),
                     self.gpu.as_ref().map_or(720,  |g| g.config.height),
                 );
+
+                // ── Animação do SNFH callout (desliza entre direita e esquerda) ──
+                let snfh_target = if self.show_panel { 1.0_f32 } else { 0.0_f32 };
+                let snfh_prev   = self.snfh_anim_t;
+                let snfh_speed  = dt / 0.28;  // 0.28s para percurso completo
+                self.snfh_anim_t = if self.snfh_anim_t < snfh_target {
+                    (self.snfh_anim_t + snfh_speed).min(snfh_target)
+                } else {
+                    (self.snfh_anim_t - snfh_speed).max(snfh_target)
+                };
+                if (self.snfh_anim_t - snfh_prev).abs() > 0.001 {
+                    rebuild_needed = true;
+                }
+
                 if rebuild_needed { self.build_labels(size); }
 
                 let cam   = self.camera.build_uniform(size.width, size.height);
