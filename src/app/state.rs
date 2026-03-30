@@ -38,6 +38,8 @@ pub(crate) const AUTO_ROTATE_SPEED: f32 = 0.008;
 pub(crate) const TRANSITION_DURATION: f32 = 0.45;
 pub(crate) const PULSE_FREQ: f32 = 1.2;
 pub(crate) const SPLASH_FADEOUT_DURATION: f32 = 0.70;
+/// Duração do fade inferência → visualização 3D (segundos).
+pub(crate) const INFER_FADE_DURATION: f32 = 0.80;
 
 // --- Janela ---
 pub(crate) const WINDOW_WIDTH: f64 = 1280.0;
@@ -140,12 +142,18 @@ pub(crate) struct App {
     pub(crate) splash_fade: f32,
     pub(crate) splash_rx: Option<mpsc::Receiver<Vec<LoadedMesh>>>,
     pub(crate) splash_labels: Vec<Label>,
+    // Tela inicial (home screen) — mostrada após splash, antes de qualquer inferência
+    pub(crate) show_home: bool,
+    pub(crate) home_labels: Vec<Label>,
+    pub(crate) home_anim_t: f32,
     // Inferência real — file picker + subprocess Python
     pub(crate) dialog_rx: Option<mpsc::Receiver<std::path::PathBuf>>,
     pub(crate) infer_active: bool,
     pub(crate) infer_rx: Option<mpsc::Receiver<crate::app::infer::InferMsg>>,
     pub(crate) infer_progress: Option<crate::app::infer::InferProgress>,
     pub(crate) infer_labels: Vec<Label>,
+    /// Fade de transição inferência → 3D (0.0 = tela infer, 1.0 = 3D completo).
+    pub(crate) infer_fade: f32,
     // Navegação entre casos
     pub(crate) current_case: usize,
     // Animação de transição entre casos
@@ -186,11 +194,15 @@ impl App {
             splash_fade: 0.0,
             splash_rx: None,
             splash_labels: Vec::new(),
+            show_home: true,
+            home_labels: Vec::new(),
+            home_anim_t: 0.0,
             dialog_rx: None,
             infer_active: false,
             infer_rx: None,
             infer_progress: None,
             infer_labels: Vec::new(),
+            infer_fade: 0.0,
             current_case: 0,
             transition_phase: 0.0,
             transition_target: 0,

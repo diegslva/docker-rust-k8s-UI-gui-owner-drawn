@@ -447,6 +447,79 @@ impl App {
         self.labels_menu_bar = menu_bar;
     }
 
+    /// Constroi os labels da tela inicial (home screen).
+    ///
+    /// Mostrada apos a splash, antes de qualquer inferencia. Apresenta o
+    /// NeuroScan como produto: branding, capacidades, call-to-action.
+    pub(crate) fn build_home_labels(&mut self, size: PhysicalSize<u32>) {
+        let Some(gpu) = &mut self.gpu else { return };
+        let w = size.width as f32;
+        let h = size.height as f32;
+        let fs = gpu.font_system_mut();
+
+        let mut labels: Vec<Label> = Vec::new();
+
+        // Titulo principal
+        let mut title = Label::new_bold(fs, "NeuroScan AI", 42.0, col_header(), 0.0, 0.0);
+        title.x = (w - title.measured_width()) / 2.0;
+        title.y = h * 0.12;
+        labels.push(title);
+
+        // Subtitulo descritivo
+        let mut sub = Label::new(
+            fs,
+            "Segmentação Cerebral Inteligente",
+            15.0,
+            Color::rgb(100, 140, 190),
+            0.0,
+            0.0,
+        );
+        sub.x = (w - sub.measured_width()) / 2.0;
+        sub.y = h * 0.12 + 54.0;
+        labels.push(sub);
+
+        // Capacidades (abaixo da animação cerebral, que fica no centro)
+        let features = [
+            "Inferência nnUNet 2D slice-a-slice",
+            "4 canais MRI: FLAIR  ·  T1w  ·  T1ce  ·  T2w",
+            "Segmentação tumoral: ET  ·  SNFH  ·  NETC",
+            "Visualização 3D interativa com dados reais",
+        ];
+        let feat_y = h * 0.62;
+        let feat_col = col_value();
+        for (i, text) in features.iter().enumerate() {
+            let mut lbl = Label::new(fs, text, 11.5, feat_col, 0.0, 0.0);
+            lbl.x = (w - lbl.measured_width()) / 2.0;
+            lbl.y = feat_y + i as f32 * 20.0;
+            labels.push(lbl);
+        }
+
+        // Call-to-action
+        let mut cta = Label::new_bold(
+            fs,
+            "Arquivo  >  Abrir Volume NIfTI para iniciar",
+            13.0,
+            Color::rgb(120, 180, 240),
+            0.0,
+            0.0,
+        );
+        cta.x = (w - cta.measured_width()) / 2.0;
+        cta.y = feat_y + features.len() as f32 * 20.0 + 32.0;
+        labels.push(cta);
+
+        // Footer
+        let footer = format!(
+            "NeuroScan AI  v{}  ·  Diego L. Silva  ·  github.com/diegslva",
+            env!("CARGO_PKG_VERSION")
+        );
+        let mut ft = Label::new(fs, &footer, 9.0, col_section(), 0.0, 0.0);
+        ft.x = (w - ft.measured_width()) / 2.0;
+        ft.y = h - 22.0;
+        labels.push(ft);
+
+        self.home_labels = labels;
+    }
+
     /// Constroi os labels da tela de inferencia.
     ///
     /// Chamado a cada frame durante inferencia ativa — o contador de fatias

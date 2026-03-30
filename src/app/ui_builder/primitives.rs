@@ -382,6 +382,103 @@ impl App {
         b
     }
 
+    /// Tela inicial (home screen): fundo escuro, scan-lines sutis, esboço
+    /// cerebral pulsante e orbital arc — mesma linguagem visual da splash e
+    /// inferência, mas sem indicadores de progresso.
+    pub(crate) fn build_home_primitives(&self, w: f32, h: f32) -> Prim2DBatch {
+        let mut b = Prim2DBatch::new();
+        let t = self.home_anim_t;
+        let cx = w / 2.0;
+        let cy = h * 0.40;
+
+        // Fundo escuro
+        b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, 1.0], w, h);
+
+        // Scan-lines sutis (efeito MRI ambiente)
+        let scan_speeds = [0.14_f32, 0.22, 0.09];
+        let scan_alphas = [0.05_f32, 0.03, 0.025];
+        for (i, (&speed, &alpha)) in scan_speeds.iter().zip(scan_alphas.iter()).enumerate() {
+            let offset = i as f32 * (h / 3.0);
+            let y = ((t * speed + offset / h).fract() * h).clamp(0.0, h - 1.5);
+            b.rect(0.0, y - 1.0, w, 2.5, [0.30, 0.58, 0.88, alpha], w, h);
+        }
+
+        // Esboço cerebral pulsante (dois anéis concêntricos)
+        let base_r = 72.0_f32;
+        let pulse_r = base_r + 10.0 * (t * 1.6).sin().abs();
+        let ring_n = 48_usize;
+        for j in 0..ring_n {
+            let a0 = (j as f32 / ring_n as f32) * std::f32::consts::TAU;
+            let a1 = ((j + 1) as f32 / ring_n as f32) * std::f32::consts::TAU;
+            b.line(
+                cx + pulse_r * a0.cos(),
+                cy + pulse_r * a0.sin(),
+                cx + pulse_r * a1.cos(),
+                cy + pulse_r * a1.sin(),
+                [0.12, 0.30, 0.55, 0.18],
+                1.2,
+                w,
+                h,
+            );
+        }
+        // Anel interno
+        let inner_r = pulse_r * 0.55;
+        let inner_n = 32_usize;
+        for j in 0..inner_n {
+            let a0 = (j as f32 / inner_n as f32) * std::f32::consts::TAU;
+            let a1 = ((j + 1) as f32 / inner_n as f32) * std::f32::consts::TAU;
+            b.line(
+                cx + inner_r * a0.cos(),
+                cy + inner_r * a0.sin(),
+                cx + inner_r * a1.cos(),
+                cy + inner_r * a1.sin(),
+                [0.10, 0.25, 0.48, 0.12],
+                0.8,
+                w,
+                h,
+            );
+        }
+
+        // Orbital arc com tail gradient
+        let orbit_r = pulse_r + 16.0;
+        let arc_segs = 40_usize;
+        let arc_span = 260.0_f32.to_radians();
+        let arc_base = t * 1.8;
+        for s in 0..arc_segs {
+            let t0 = s as f32 / arc_segs as f32;
+            let t1 = (s + 1) as f32 / arc_segs as f32;
+            let a0 = arc_base + t0 * arc_span;
+            let a1 = arc_base + t1 * arc_span;
+            let alpha = 0.22 * t0.powf(1.5);
+            b.line(
+                cx + orbit_r * a0.cos(),
+                cy + orbit_r * a0.sin(),
+                cx + orbit_r * a1.cos(),
+                cy + orbit_r * a1.sin(),
+                [0.35, 0.65, 1.0, alpha],
+                1.5,
+                w,
+                h,
+            );
+        }
+
+        // Ponto brilhante na ponta do arco
+        let tip_angle = arc_base + arc_span;
+        let tip_x = cx + orbit_r * tip_angle.cos();
+        let tip_y = cy + orbit_r * tip_angle.sin();
+        b.rect(
+            tip_x - 2.5,
+            tip_y - 2.5,
+            5.0,
+            5.0,
+            [0.55, 0.82, 1.0, 0.65],
+            w,
+            h,
+        );
+
+        b
+    }
+
     /// Tela de inferência: fundo escuro, scan-lines animadas, barra de progresso,
     /// barras de volume por classe e esboço pulsante do cérebro.
     pub(crate) fn build_infer_primitives(&self, w: f32, h: f32) -> Prim2DBatch {
