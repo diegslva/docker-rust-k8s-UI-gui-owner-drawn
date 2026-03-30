@@ -22,15 +22,24 @@ const WINDOW_WIDTH: f64 = 1280.0;
 const WINDOW_HEIGHT: f64 = 720.0;
 const ICON_BYTES: &[u8] = include_bytes!("../assets/icon_256x256.png");
 
-/// Meshes NeuroScan: cerebro (FLAIR) + tumor (segmentacao BraTS)
+// --- Meshes NeuroScan ---
 const BRAIN_OBJ: &str = "assets/models/brain.obj";
-const TUMOR_OBJ: &str = "assets/models/tumor.obj";
+/// ET: tumor realçado (Enhancing Tumor)
+const TUMOR_ET_OBJ: &str = "assets/models/tumor_et.obj";
+/// SNFH: edema peritumoral (Surrounding Non-enhancing FLAIR Hyperintensity)
+const TUMOR_SNFH_OBJ: &str = "assets/models/tumor_snfh.obj";
+/// NETC: núcleo necrótico (Non-Enhancing Tumor Core)
+const TUMOR_NETC_OBJ: &str = "assets/models/tumor_netc.obj";
 
-/// Cores das meshes (RGB linear)
-/// Cerebro: substancia cinzenta (cinza rosado)
+// --- Cores RGB (linear) por sub-região tumoral (WHO 2021) ---
+/// Cerebro: substancia cinzenta, cinza rosado
 const BRAIN_COLOR: [f32; 3] = [0.82, 0.72, 0.70];
-/// Tumor: vermelho-laranja vivo para contraste maximo
-const TUMOR_COLOR: [f32; 3] = [0.90, 0.28, 0.18];
+/// ET – vermelho vivo
+const ET_COLOR: [f32; 3] = [0.95, 0.18, 0.12];
+/// SNFH – âmbar/amarelo
+const SNFH_COLOR: [f32; 3] = [0.95, 0.75, 0.08];
+/// NETC – azul
+const NETC_COLOR: [f32; 3] = [0.25, 0.45, 0.95];
 
 /// Sensibilidade do drag de mouse (radianos por pixel).
 const MOUSE_SENSITIVITY: f32 = 0.005;
@@ -42,16 +51,21 @@ const ZOOM_MAX: f32 = 20.0;
 /// Limite vertical da camera (evita gimbal lock no polo).
 const PITCH_LIMIT: f32 = 1.5;
 
+/// Legenda: (texto, [f32; 3] cor do mesh, mesh_index_minimo para mostrar)
+const LEGEND: &[(&str, [f32; 3])] = &[
+    ("ET  Enhancing Tumor",     ET_COLOR),
+    ("SNFH  Peritumoral Edema", SNFH_COLOR),
+    ("NETC  Necrotic Core",     NETC_COLOR),
+];
+
 struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
-    /// Meshes com suas cores: (mesh, tint_rgb).
-    /// Indice 0 = cerebro, indice 1 = tumor (se carregado).
+    /// (mesh, tint_rgb) — indice 0=cerebro, 1=ET, 2=SNFH, 3=NETC
     meshes: Vec<(Mesh, [f32; 3])>,
     camera: OrbitalCamera,
     labels: Vec<Label>,
     last_frame: Instant,
-    // Estado do mouse
     mouse_pressed: bool,
     mouse_pos: Option<(f64, f64)>,
 }
@@ -76,50 +90,88 @@ impl App {
         let h = size.height as f32;
         let fs = gpu.font_system_mut();
 
-        let has_tumor = self.meshes.len() > 1;
-        let subtitle = if has_tumor {
-            "FLAIR + Tumor (BraTS)  \u{00B7}  Arraste para girar  \u{00B7}  Scroll para zoom"
-        } else {
-            "FLAIR  \u{00B7}  Arraste para girar  \u{00B7}  Scroll para zoom"
-        };
-
+        // --- Titulo ---
         let mut title = Label::new_bold(
             fs,
-            "NeuroScan  \u{00B7}  Cerebro 3D",
-            32.0,
+            "NeuroScan  \u{00B7}  Cerebro 3D + Tumor WHO 2021",
+            30.0,
             Color::WHITE,
-            0.0,
-            0.0,
+            0.0, 0.0,
         );
         title.x = (w - title.measured_width()) / 2.0;
-        title.y = h * 0.06;
+        title.y = h * 0.05;
 
+        // --- Subtitulo ---
         let mut sub = Label::new(
             fs,
-            subtitle,
-            16.0,
+            "Predicao nnUNet  \u{00B7}  Arraste para girar  \u{00B7}  Scroll para zoom",
+            15.0,
             Color::rgb(140, 150, 165),
-            0.0,
-            0.0,
+            0.0, 0.0,
         );
         sub.x = (w - sub.measured_width()) / 2.0;
-        sub.y = title.y + title.line_height() + 6.0;
+        sub.y = title.y + title.line_height() + 4.0;
 
-        self.labels = vec![title, sub];
+        let mut labels = vec![title, sub];
+
+        // --- Legenda (canto inferior esquerdo) ---
+        // Mostra apenas as classes que foram carregadas (indices 1, 2, 3).
+        let legend_x = 28.0;
+        let legend_font = 14.0;
+        let legend_gap  = legend_font * 1.4;
+        // Ancora no bottom: empilha de baixo para cima
+        let legend_bottom = h * 0.97;
+        let n_legend = LEGEND.len() as f32;
+        let legend_start_y = legend_bottom - n_legend * legend_gap;
+
+        for (i, (text, rgb)) in LEGEND.iter().enumerate() {
+            // +1 porque indice 0 e o cerebro
+            let mesh_idx = i + 1;
+            if self.meshes.len() <= mesh_idx {
+                continue; // essa classe nao foi carregada
+            }
+            let color = Color::rgb(
+                (rgb[0] * 255.0) as u8,
+                (rgb[1] * 255.0) as u8,
+                (rgb[2] * 255.0) as u8,
+            );
+            labels.push(Label::new(
+                fs,
+                text,
+                legend_font,
+                color,
+                legend_x,
+                legend_start_y + i as f32 * legend_gap,
+            ));
+        }
+
+        self.labels = labels;
     }
 
     fn reposition_labels(&mut self, size: PhysicalSize<u32>) {
         let w = size.width as f32;
         let h = size.height as f32;
-        let title_y = h * 0.06;
-        let title_lh = self.labels.first().map_or(32.0 * 1.25, |t| t.line_height());
-        if let Some(title) = self.labels.get_mut(0) {
-            title.x = (w - title.measured_width()) / 2.0;
-            title.y = title_y;
+        let title_y  = h * 0.05;
+        let title_lh = self.labels.first().map_or(30.0 * 1.25, |t| t.line_height());
+
+        // Titulo (idx 0)
+        if let Some(t) = self.labels.get_mut(0) {
+            t.x = (w - t.measured_width()) / 2.0;
+            t.y = title_y;
         }
-        if let Some(sub) = self.labels.get_mut(1) {
-            sub.x = (w - sub.measured_width()) / 2.0;
-            sub.y = title_y + title_lh + 6.0;
+        // Subtitulo (idx 1)
+        if let Some(s) = self.labels.get_mut(1) {
+            s.x = (w - s.measured_width()) / 2.0;
+            s.y = title_y + title_lh + 4.0;
+        }
+        // Legenda (idx 2+)
+        let legend_font = 14.0;
+        let legend_gap  = legend_font * 1.4;
+        let legend_bottom = h * 0.97;
+        let n_legend = (self.labels.len().saturating_sub(2)) as f32;
+        let legend_start_y = legend_bottom - n_legend * legend_gap;
+        for (j, label) in self.labels.iter_mut().skip(2).enumerate() {
+            label.y = legend_start_y + j as f32 * legend_gap;
         }
     }
 }
@@ -155,7 +207,7 @@ impl ApplicationHandler for App {
 
         let icon = load_embedded_icon().ok();
         let mut attrs = WindowAttributes::default()
-            .with_title("NeuroScan [Phase 5B — Brain 3D + Tumor]")
+            .with_title("NeuroScan [Phase 5D — Brain 3D + Multi-Class Tumor WHO 2021]")
             .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT));
         if let Some(ic) = icon {
             attrs = attrs.with_window_icon(Some(ic));
@@ -187,28 +239,32 @@ impl ApplicationHandler for App {
 
         let device = &self.gpu.as_ref().unwrap().device;
 
-        // Carregar cerebro (obrigatorio)
+        // Cerebro (obrigatorio)
         match Mesh::from_obj(device, BRAIN_OBJ) {
-            Ok(m) => {
-                info!("cerebro carregado");
-                self.meshes.push((m, BRAIN_COLOR));
-            }
-            Err(err) => warn!(error = %err, "falha ao carregar brain.obj"),
+            Ok(m) => { info!("cerebro carregado"); self.meshes.push((m, BRAIN_COLOR)); }
+            Err(e) => warn!(error = %e, "brain.obj nao encontrado"),
         }
 
-        // Carregar tumor (opcional — nao critico se ausente)
-        match Mesh::from_obj(device, TUMOR_OBJ) {
-            Ok(m) => {
-                info!("tumor carregado");
-                self.meshes.push((m, TUMOR_COLOR));
+        // Sub-regioes tumorais (todas opcionais — renderiza o que existir)
+        let tumor_files = [
+            (TUMOR_ET_OBJ,   ET_COLOR,   "ET"),
+            (TUMOR_SNFH_OBJ, SNFH_COLOR, "SNFH"),
+            (TUMOR_NETC_OBJ, NETC_COLOR, "NETC"),
+        ];
+        for (path, color, name) in &tumor_files {
+            match Mesh::from_obj(device, path) {
+                Ok(m) => { info!(class = name, "tumor carregado"); self.meshes.push((m, *color)); }
+                Err(e) => warn!(error = %e, class = name, "tumor nao encontrado"),
             }
-            Err(err) => warn!(error = %err, "tumor.obj nao encontrado (apenas cerebro): {err}"),
         }
 
-        info!(meshes = self.meshes.len(), "meshes carregadas");
+        info!(
+            total_meshes = self.meshes.len(),
+            tumor_classes = self.meshes.len().saturating_sub(1),
+            "scene carregada"
+        );
 
-        // Camera centralizada no mesh normalizado [-1, 1]
-        self.camera.target = glam::Vec3::ZERO;
+        self.camera.target   = glam::Vec3::ZERO;
         self.camera.distance = 4.0;
 
         let size = window.inner_size();
@@ -231,17 +287,15 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
 
-            // --- Mouse: botao pressionado / solto ---
             WindowEvent::MouseInput { state, button, .. } => {
                 if button == MouseButton::Left {
                     self.mouse_pressed = state == ElementState::Pressed;
                     if let Some(w) = &self.window {
-                        let cursor = if self.mouse_pressed {
+                        w.set_cursor(if self.mouse_pressed {
                             CursorIcon::Grabbing
                         } else {
                             CursorIcon::Grab
-                        };
-                        w.set_cursor(cursor);
+                        });
                     }
                     if state == ElementState::Released {
                         self.mouse_pos = None;
@@ -249,12 +303,11 @@ impl ApplicationHandler for App {
                 }
             }
 
-            // --- Mouse: movimento -- drag para rotacionar ---
             WindowEvent::CursorMoved { position, .. } => {
                 if self.mouse_pressed {
-                    if let Some((prev_x, prev_y)) = self.mouse_pos {
-                        let dx = (position.x - prev_x) as f32;
-                        let dy = (position.y - prev_y) as f32;
+                    if let Some((px, py)) = self.mouse_pos {
+                        let dx = (position.x - px) as f32;
+                        let dy = (position.y - py) as f32;
                         self.camera.yaw += dx * MOUSE_SENSITIVITY;
                         self.camera.pitch = (self.camera.pitch - dy * MOUSE_SENSITIVITY)
                             .clamp(-PITCH_LIMIT, PITCH_LIMIT);
@@ -263,7 +316,6 @@ impl ApplicationHandler for App {
                 self.mouse_pos = Some((position.x, position.y));
             }
 
-            // --- Mouse: scroll -- zoom ---
             WindowEvent::MouseWheel { delta, .. } => {
                 let scroll = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
@@ -285,19 +337,18 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::RedrawRequested => {
-                let now = Instant::now();
-                self.last_frame = now;
+                self.last_frame = Instant::now();
 
                 let w = self.gpu.as_ref().map_or(1280, |g| g.config.width);
-                let h = self.gpu.as_ref().map_or(720, |g| g.config.height);
-                let cam_uniform = self.camera.build_uniform(w, h);
+                let h = self.gpu.as_ref().map_or(720,  |g| g.config.height);
+                let cam = self.camera.build_uniform(w, h);
 
                 if let Some(gpu) = &mut self.gpu {
                     let mesh_refs: Vec<(&Mesh, [f32; 3])> =
                         self.meshes.iter().map(|(m, c)| (m, *c)).collect();
                     let label_refs: Vec<&Label> = self.labels.iter().collect();
-                    if let Err(err) = gpu.render(&cam_uniform, &mesh_refs, &label_refs) {
-                        warn!(error = %err, "erro no render");
+                    if let Err(e) = gpu.render(&cam, &mesh_refs, &label_refs) {
+                        warn!(error = %e, "erro no render");
                     }
                 }
                 if let Some(w) = &self.window {
@@ -322,7 +373,7 @@ fn main() -> Result<()> {
         .with_thread_ids(true)
         .init();
 
-    info!(version = env!("CARGO_PKG_VERSION"), "iniciando");
+    info!(version = env!("CARGO_PKG_VERSION"), "iniciando NeuroScan viewer");
 
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);

@@ -1,23 +1,22 @@
 """
 extract_brain_mesh.py -- NIfTI (BraTS) -> OBJ via Marching Cubes
 
-Extrai mesh do cerebro (FLAIR) e, opcionalmente, mesh do tumor (labelsTr).
-Ambas as meshes usam o mesmo sistema de coordenadas (mesma normalizacao).
+Extrai mesh do cerebro (FLAIR) e salva brain_meta.json com center/scale
+para que outros scripts (infer_tumor_3d.py) usem o mesmo sistema de coordenadas.
 
-Uso basico:
+Uso:
     uv run --project G:/www/neuroscan.com python scripts/extract_brain_mesh.py
 
-Uso completo (cerebro + tumor):
+    # Customizado:
     uv run --project G:/www/neuroscan.com python scripts/extract_brain_mesh.py \
-        --input   "G:/www/neuroscan.com/data/brats/Task01_BrainTumour/imagesTr/BRATS_001.nii.gz" \
-        --labels  "G:/www/neuroscan.com/data/brats/Task01_BrainTumour/labelsTr/BRATS_001.nii.gz" \
-        --output  "assets/models/brain.obj" \
-        --tumor   "assets/models/tumor.obj"
+        --input  "G:/www/neuroscan.com/data/brats/Task01_BrainTumour/imagesTr/BRATS_001.nii.gz" \
+        --output "assets/models/brain.obj"
 
 Requer: nibabel, scikit-image, numpy  (venv do neuroscan.com)
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -51,14 +50,6 @@ def load_flair(path: Path) -> np.ndarray:
     return flair
 
 
-def load_labels(path: Path) -> np.ndarray:
-    """Carrega volume de labels BraTS: 0=fundo 1=necrose 2=edema 3=tumor realcado."""
-    img = nib.load(str(path))
-    data = img.get_fdata(dtype=np.float32)
-    print(f"Labels shape: {data.shape}  valores unicos: {np.unique(data.astype(int))}")
-    return data
-
-
 def extract_surface(volume: np.ndarray, level: float, step_size: int = 1) -> tuple[np.ndarray, np.ndarray]:
     """Marching Cubes -> verts (N,3) e faces (M,3)."""
     print(f"Marching Cubes com level={level}, step_size={step_size} ...")
@@ -72,11 +63,15 @@ def extract_surface(volume: np.ndarray, level: float, step_size: int = 1) -> tup
     return verts, faces
 
 
-def normalize_verts(verts: np.ndarray, center: np.ndarray | None = None, scale: float | None = None) -> tuple[np.ndarray, np.ndarray, float]:
+def normalize_verts(
+    verts: np.ndarray,
+    center: np.ndarray | None = None,
+    scale: float | None = None,
+) -> tuple[np.ndarray, np.ndarray, float]:
     """
     Centraliza e escala vertices para [-1, 1].
-    Se center/scale forem fornecidos (de outro mesh), usa os mesmos valores
-    para garantir alinhamento espacial entre meshes.
+    Se center/scale forem fornecidos, usa os mesmos valores para garantir
+    alinhamento espacial entre meshes.
     Retorna (verts_normalizados, center_usado, scale_usado).
     """
     if center is None:
@@ -89,7 +84,7 @@ def normalize_verts(verts: np.ndarray, center: np.ndarray | None = None, scale: 
 
 
 def compute_vertex_normals(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
-    """Normais suaves por vertice: acumula normais das faces adjacentes."""
+    """Normais suaves por vertice."""
     normals = np.zeros_like(verts)
     v0 = verts[faces[:, 0]]
     v1 = verts[faces[:, 1]]
@@ -98,12 +93,11 @@ def compute_vertex_normals(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
     for i in range(3):
         np.add.at(normals, faces[:, i], fn)
     lengths = np.linalg.norm(normals, axis=1, keepdims=True)
-    lengths = np.where(lengths == 0, 1.0, lengths)
-    return normals / lengths
+    return normals / np.where(lengths == 0, 1.0, lengths)
 
 
 def save_obj(path: Path, verts: np.ndarray, normals: np.ndarray, faces: np.ndarray, comment: str = "") -> None:
-    """Salva mesh no formato Wavefront OBJ com normais por vertice."""
+    """Salva mesh no formato Wavefront OBJ com normais."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         if comment:
@@ -122,69 +116,48 @@ def save_obj(path: Path, verts: np.ndarray, normals: np.ndarray, faces: np.ndarr
     print(f"Salvo: {path}  ({size_mb:.1f} MB)")
 
 
+def save_meta(path: Path, center: np.ndarray, scale: float) -> None:
+    """Salva center/scale em JSON para reutilizacao por outros scripts."""
+    meta = {"center": center.tolist(), "scale": scale}
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+    print(f"Meta salvo: {path}  (center={[f'{c:.3f}' for c in center]}, scale={scale:.3f})")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="NIfTI -> OBJ via Marching Cubes (cerebro + tumor)")
+    parser = argparse.ArgumentParser(description="NIfTI -> brain.obj via Marching Cubes")
     parser.add_argument(
         "--input", "-i",
         default="G:/www/neuroscan.com/data/brats/Task01_BrainTumour/imagesTr/BRATS_001.nii.gz",
     )
-    parser.add_argument(
-        "--labels", "-l",
-        default="G:/www/neuroscan.com/data/brats/Task01_BrainTumour/labelsTr/BRATS_001.nii.gz",
-        help="Volume de labels BraTS para extrair mesh do tumor (opcional)",
-    )
     parser.add_argument("--output", "-o", default="assets/models/brain.obj")
-    parser.add_argument("--tumor",  "-t", default="assets/models/tumor.obj")
-    parser.add_argument("--level",        type=float, default=0.15, help="Threshold MC para cerebro")
-    parser.add_argument("--tumor-level",  type=float, default=0.5,  help="Threshold MC para tumor (binario)")
-    parser.add_argument("--step",         type=int,   default=1,    help="Step size MC (1=max detalhe)")
+    parser.add_argument("--level",  type=float, default=0.15, help="Threshold MC (default 0.15)")
+    parser.add_argument("--step",   type=int,   default=1,    help="Step size MC (1=max detalhe)")
     args = parser.parse_args()
 
-    input_path  = Path(args.input)
-    labels_path = Path(args.labels)
-    brain_path  = Path(args.output)
-    tumor_path  = Path(args.tumor)
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+    meta_path   = output_path.parent / "brain_meta.json"
 
     if not input_path.exists():
         print(f"ERRO: {input_path} nao encontrado", file=sys.stderr)
         sys.exit(1)
 
     print("=== extract_brain_mesh ===")
-    print(f"Input FLAIR:  {input_path}")
-    print(f"Input labels: {labels_path}")
+    print(f"Input:  {input_path}")
+    print(f"Output: {output_path}")
     print()
 
-    # --- Cerebro ---
-    print("--- Extraindo cerebro ---")
     flair = load_flair(input_path)
-    brain_verts, brain_faces = extract_surface(flair, level=args.level, step_size=args.step)
-    brain_verts, center, scale = normalize_verts(brain_verts)
-    brain_normals = compute_vertex_normals(brain_verts, brain_faces)
-    save_obj(brain_path, brain_verts, brain_normals, brain_faces,
+    verts, faces = extract_surface(flair, level=args.level, step_size=args.step)
+    verts, center, scale = normalize_verts(verts)
+    normals = compute_vertex_normals(verts, faces)
+
+    save_obj(output_path, verts, normals, faces,
              comment="Brain mesh (BraTS FLAIR) -- gerado por extract_brain_mesh.py")
 
-    # --- Tumor ---
-    if labels_path.exists():
-        print("\n--- Extraindo tumor ---")
-        labels = load_labels(labels_path)
-
-        tumor_count = int(np.sum(labels > 0))
-        print(f"Voxels de tumor (labels > 0): {tumor_count:,}")
-
-        if tumor_count < 100:
-            print("AVISO: poucos voxels de tumor, pulando extracao.")
-        else:
-            # Mascara binaria: todo tumor (necrose + edema + realce)
-            tumor_mask = (labels > 0).astype(np.float32)
-            tumor_verts, tumor_faces = extract_surface(tumor_mask, level=args.tumor_level, step_size=args.step)
-
-            # MESMO center e scale do cerebro para alinhamento perfeito
-            tumor_verts, _, _ = normalize_verts(tumor_verts, center=center, scale=scale)
-            tumor_normals = compute_vertex_normals(tumor_verts, tumor_faces)
-            save_obj(tumor_path, tumor_verts, tumor_normals, tumor_faces,
-                     comment="Tumor mesh (BraTS labels 1+2+3) -- gerado por extract_brain_mesh.py")
-    else:
-        print(f"\nAVISO: labels nao encontrado em {labels_path}, pulando tumor.")
+    # Salvar metadados de normalizacao para uso por infer_tumor_3d.py
+    save_meta(meta_path, center, scale)
 
     print("\nConcluido.")
 
