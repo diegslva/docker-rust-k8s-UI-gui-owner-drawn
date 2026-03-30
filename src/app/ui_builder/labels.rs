@@ -1,0 +1,449 @@
+use neuroscan_core::MENU_BAR_H;
+use neuroscan_core::MENU_TOP_XS;
+use neuroscan_core::TOP_CASES;
+use winit::dpi::PhysicalSize;
+
+use crate::app::App;
+use crate::app::state::{ET_COLOR, NETC_COLOR, SNFH_COLOR};
+use crate::ui::{Color, Label};
+
+use super::{col_dim, col_header, col_section, col_value, rgb_f};
+
+impl App {
+    pub(crate) fn build_splash_labels(&mut self, size: PhysicalSize<u32>) {
+        let Some(gpu) = &mut self.gpu else { return };
+        let w = size.width as f32;
+        let h = size.height as f32;
+        let cy = h / 2.0 + 28.0;
+        let fs = gpu.font_system_mut();
+
+        let mut title = Label::new_bold(fs, "NeuroScan", 50.0, Color::rgb(222, 234, 248), 0.0, 0.0);
+        title.x = (w - title.measured_width()) / 2.0;
+        title.y = cy - 122.0;
+
+        let mut sub = Label::new(
+            fs,
+            "Visualizador Médico 3D",
+            15.5,
+            Color::rgb(88, 128, 168),
+            0.0,
+            0.0,
+        );
+        sub.x = (w - sub.measured_width()) / 2.0;
+        sub.y = title.y + title.line_height() + 5.0;
+
+        self.splash_labels = vec![title, sub];
+    }
+
+    pub(crate) fn build_labels(&mut self, size: PhysicalSize<u32>) {
+        // Snapshot all data fields needed before borrowing self.gpu mutably.
+        let w = size.width as f32;
+        let h = size.height as f32;
+        let scan = self.scan.clone();
+        let show_panel = self.show_panel;
+        let current_case = self.current_case;
+
+        let Some(gpu) = &mut self.gpu else { return };
+        let fs = gpu.font_system_mut();
+
+        let mut always: Vec<Label> = Vec::new();
+        let mut panel: Vec<Label> = Vec::new();
+        let mut snfh: Vec<Label> = Vec::new();
+        // Labels do topo da barra ficam no overlay (Pass 2), NÃO em `always` (Pass 1).
+        let mut menu_bar: Vec<Label> = Vec::new();
+
+        // ── Barra de menu — itens do topo ────────────────────────────────────
+        {
+            let menu_col = Color::rgb(236, 242, 255);
+            let bar_y = (MENU_BAR_H - 11.5_f32 * 1.25) / 2.0;
+            let tops = [
+                ("Arquivo", MENU_TOP_XS[0]),
+                ("Casos", MENU_TOP_XS[1]),
+                ("Sobre", MENU_TOP_XS[2]),
+            ];
+            for (text, lx) in &tops {
+                menu_bar.push(Label::new(
+                    fs,
+                    text,
+                    11.5,
+                    menu_col,
+                    lx + 10.0,
+                    bar_y.max(4.0),
+                ));
+            }
+        }
+
+        // ── Título ──────────────────────────────────────────────────────────
+        let mut title = Label::new_bold(fs, "NeuroScan", 28.0, col_header(), 0.0, 0.0);
+        title.x = (w - title.measured_width()) / 2.0;
+        title.y = (h * 0.04).max(MENU_BAR_H + 8.0);
+
+        // ── Subtítulo ────────────────────────────────────────────────────────
+        let sub_text = if scan.case_id.is_empty() {
+            "Visualizador Médico 3D  \u{00B7}  Arraste para girar  \u{00B7}  Scroll para zoom  \u{00B7}  I para painel  \u{00B7}  \u{2190}\u{2192} para navegar".to_string()
+        } else {
+            format!(
+                "{}  \u{00B7}  {}  \u{00B7}  {}  \u{00B7}  I para painel  \u{00B7}  \u{2190}\u{2192} para navegar",
+                scan.case_id, scan.dataset, scan.modalities
+            )
+        };
+        let mut sub = Label::new(fs, &sub_text, 12.0, Color::rgb(148, 163, 184), 0.0, 0.0);
+        sub.x = (w - sub.measured_width()) / 2.0;
+        sub.y = title.y + title.line_height() + 3.0;
+
+        always.push(title);
+        always.push(sub);
+
+        // ── Callouts ─────────────────────────────────────────────────────────
+        let y_ct = h * 0.14;
+        let box_w = (w * 0.175).clamp(190.0, 240.0);
+        let _box_h = 92.0_f32;
+        let pad = 12.0_f32;
+
+        let col_micro = Color::rgb(148, 164, 182);
+
+        // ET — canto superior esquerdo
+        {
+            let ex = 24.0;
+            let ey = y_ct;
+            let vol = if scan.et_volume_ml > 0.0 {
+                format!("{:.1} mL", scan.et_volume_ml)
+            } else {
+                String::new()
+            };
+            always.push(Label::new(
+                fs,
+                "\u{25CF}  ET  \u{00B7}  Enhancing Tumor",
+                10.5,
+                rgb_f(ET_COLOR),
+                ex + pad,
+                ey + 20.0,
+            ));
+            if !vol.is_empty() {
+                always.push(Label::new_bold(
+                    fs,
+                    &vol,
+                    13.0,
+                    Color::WHITE,
+                    ex + pad,
+                    ey + 38.0,
+                ));
+            }
+            always.push(Label::new(
+                fs,
+                "Realce pós-contraste · barreira comprometida",
+                8.8,
+                col_micro,
+                ex + pad,
+                ey + 62.0,
+            ));
+        }
+
+        // SNFH — labels em vec separado; posição definida por update_snfh_label_positions()
+        {
+            let vol_str = if scan.snfh_volume_ml > 0.0 {
+                format!("{:.1} mL", scan.snfh_volume_ml)
+            } else {
+                String::new()
+            };
+            snfh.push(Label::new(
+                fs,
+                "\u{25CF}  SNFH  \u{00B7}  Peritumoral Edema",
+                10.5,
+                rgb_f(SNFH_COLOR),
+                0.0,
+                0.0,
+            ));
+            snfh.push(Label::new_bold(fs, &vol_str, 13.0, Color::WHITE, 0.0, 0.0));
+            snfh.push(Label::new(
+                fs,
+                "Edema e infiltração peritumoral",
+                8.8,
+                col_micro,
+                0.0,
+                0.0,
+            ));
+        }
+
+        // NETC — centro inferior
+        {
+            let nx = (w / 2.0 - box_w / 2.0).max(24.0);
+            let ny = (h - 185.0).max(y_ct + 92.0 + 20.0);
+            let vol = if scan.netc_volume_ml > 0.0 {
+                format!("{:.1} mL", scan.netc_volume_ml)
+            } else {
+                String::new()
+            };
+            always.push(Label::new(
+                fs,
+                "\u{25CF}  NETC  \u{00B7}  Necrotic Core",
+                10.5,
+                rgb_f(NETC_COLOR),
+                nx + pad,
+                ny + 20.0,
+            ));
+            if !vol.is_empty() {
+                always.push(Label::new_bold(
+                    fs,
+                    &vol,
+                    13.0,
+                    Color::WHITE,
+                    nx + pad,
+                    ny + 38.0,
+                ));
+            }
+            always.push(Label::new(
+                fs,
+                "Núcleo necrótico hipóxico · centro da lesão",
+                8.8,
+                col_micro,
+                nx + pad,
+                ny + 62.0,
+            ));
+        }
+
+        // ── Indicador de caso (centro inferior) ──────────────────────────────
+        {
+            let idx = current_case + 1;
+            let n = TOP_CASES.len();
+            let text = format!("\u{2190}   Caso {}  /  {}   \u{2192}", idx, n);
+            let mut nav = Label::new(fs, &text, 11.0, Color::rgb(100, 116, 139), 0.0, 0.0);
+            nav.x = (w - nav.measured_width()) / 2.0;
+            nav.y = h - 22.0;
+            always.push(nav);
+        }
+
+        // ── Marca d'água "NeuroScan" ─────────────────────────────────────────
+        {
+            let mut wm = Label::new_bold(
+                fs,
+                "NeuroScan",
+                96.0,
+                Color::rgba(210, 222, 238, 11),
+                0.0,
+                0.0,
+            );
+            wm.x = (w - wm.measured_width()) / 2.0;
+            wm.y = (h - wm.line_height()) / 2.0 + 20.0;
+            always.push(wm);
+        }
+
+        // ── Rodapé técnico (canto inferior direito) ───────────────────────────
+        {
+            let footer = format!(
+                "NeuroScan AI  \u{00B7}  v{}  \u{00B7}  nnUNet 2D  \u{00B7}  BraTS 2021  \u{00B7}  Dice 0.865",
+                env!("CARGO_PKG_VERSION")
+            );
+            let mut ft = Label::new(fs, &footer, 9.0, col_section(), 0.0, 0.0);
+            ft.x = (w - ft.measured_width() - 18.0).max(0.0);
+            ft.y = h - 16.0;
+            always.push(ft);
+        }
+
+        // ── Legenda inferior esquerda ─────────────────────────────────────────
+        let leg_font = 11.0;
+        let leg_gap = leg_font * 1.8;
+        let leg_items = [
+            (ET_COLOR, "ET", scan.et_volume_ml),
+            (SNFH_COLOR, "SNFH", scan.snfh_volume_ml),
+            (NETC_COLOR, "NETC", scan.netc_volume_ml),
+        ];
+        let n_leg = leg_items.len() as f32;
+        let leg_y = h - n_leg * leg_gap - 30.0;
+        for (i, (rgb, name, vol)) in leg_items.iter().enumerate() {
+            let text = if *vol > 0.0 {
+                format!("\u{25CF}  {}  {:.1} mL", name, vol)
+            } else {
+                format!("\u{25CF}  {}", name)
+            };
+            always.push(Label::new(
+                fs,
+                &text,
+                leg_font,
+                rgb_f(*rgb),
+                28.0,
+                leg_y + i as f32 * leg_gap,
+            ));
+        }
+
+        // ── Painel clínico (toggle I) ─────────────────────────────────────────
+        let px = (w - 268.0).max(w * 0.72);
+        let pl = px + 14.0;
+        let mut py = h * 0.14;
+
+        macro_rules! section {
+            ($text:expr) => {{
+                panel.push(Label::new(fs, $text, 9.5, col_section(), pl, py));
+                py += 18.0;
+            }};
+        }
+        macro_rules! kv {
+            ($key:expr, $val:expr) => {{
+                panel.push(Label::new(fs, $key, 10.0, col_dim(), pl, py));
+                panel.push(Label::new(fs, $val, 11.0, col_value(), pl + 90.0, py));
+                py += 16.0;
+            }};
+        }
+        macro_rules! line_text {
+            ($text:expr, $col:expr, $size:expr) => {{
+                panel.push(Label::new(fs, $text, $size, $col, pl, py));
+                py += $size * 1.5;
+            }};
+        }
+
+        // Silence unused warning when show_panel is false (macros still compile the branches)
+        let _ = show_panel;
+
+        let case_val = if scan.case_id.is_empty() {
+            "—".to_string()
+        } else {
+            scan.case_id.clone()
+        };
+        let dataset_val = if scan.dataset.is_empty() {
+            "—".to_string()
+        } else {
+            scan.dataset.clone()
+        };
+        let nav_val = format!("{} / {}", current_case + 1, TOP_CASES.len());
+
+        section!("ANÁLISE VOLUMÉTRICA");
+        kv!("Caso", &case_val);
+        kv!("Navegação", &nav_val);
+        kv!("Protocolo", &dataset_val);
+        if !scan.modalities.is_empty() {
+            panel.push(Label::new(fs, "Modalidades", 10.0, col_dim(), pl, py));
+            panel.push(Label::new(
+                fs,
+                "FLAIR · T1w",
+                11.0,
+                col_value(),
+                pl + 90.0,
+                py,
+            ));
+            py += 14.0;
+            panel.push(Label::new(
+                fs,
+                "T1ce · T2w",
+                11.0,
+                col_value(),
+                pl + 90.0,
+                py,
+            ));
+            py += 16.0;
+        }
+        kv!("Método", "nnUNet 2D Slice");
+        kv!("Acurácia", "Dice  0.865");
+        py += 8.0;
+
+        section!("CLASSIFICAÇÃO TUMORAL");
+        line_text!("WHO 2021  ·  Grau IV", col_value(), 11.0);
+        line_text!("Glioblastoma Multiforme", col_header(), 11.5);
+        py += 6.0;
+
+        section!("RISCO CLÍNICO");
+        kv!("Grau WHO", "IV  —  Alto Risco");
+        kv!("IDH Status", "Wild-type (wt)");
+        kv!("MGMT Metil.", "A investigar");
+        kv!("Ki-67", "> 30%");
+        kv!("Critérios", "RANO 2010");
+        kv!("Sobrevida med.", "14 – 16 meses");
+        py += 3.0;
+        panel.push(Label::new(
+            fs,
+            "* Dados pop. BraTS 2021. Não substitui laudo.",
+            8.5,
+            col_section(),
+            pl,
+            py,
+        ));
+        py += 14.0;
+        py += 8.0;
+
+        section!("VOLUMES SEGMENTADOS");
+        let et_s = format!("{:.1} mL", scan.et_volume_ml);
+        let snfh_s = format!("{:.1} mL", scan.snfh_volume_ml);
+        let netc_s = format!("{:.1} mL", scan.netc_volume_ml);
+        let tot_s = format!("{:.1} mL", scan.total_volume_ml);
+        panel.push(Label::new(
+            fs,
+            "\u{25CF}  ET    Realce tumoral",
+            10.5,
+            rgb_f(ET_COLOR),
+            pl,
+            py,
+        ));
+        panel.push(Label::new(fs, &et_s, 11.5, Color::WHITE, pl + 168.0, py));
+        py += 15.0;
+        panel.push(Label::new(
+            fs,
+            "\u{25CF}  SNFH  Edema peritumoral",
+            10.5,
+            rgb_f(SNFH_COLOR),
+            pl,
+            py,
+        ));
+        panel.push(Label::new(fs, &snfh_s, 11.5, Color::WHITE, pl + 168.0, py));
+        py += 15.0;
+        panel.push(Label::new(
+            fs,
+            "\u{25CF}  NETC  Núcleo necrótico",
+            10.5,
+            rgb_f(NETC_COLOR),
+            pl,
+            py,
+        ));
+        panel.push(Label::new(fs, &netc_s, 11.5, Color::WHITE, pl + 168.0, py));
+        py += 18.0;
+        panel.push(Label::new(fs, "Total", 10.0, col_dim(), pl + 120.0, py));
+        panel.push(Label::new_bold(
+            fs,
+            &tot_s,
+            13.0,
+            Color::WHITE,
+            pl + 168.0,
+            py,
+        ));
+        py += 22.0;
+
+        section!("METODOLOGIA");
+        kv!("Segmentação", "nnUNet 2D Slice");
+        kv!("Treinamento", "484 casos BraTS 2021");
+        kv!("Acurácia", "Dice 0.865");
+        kv!("Modalidades", "FLAIR/T1w/T1ce/T2w");
+        kv!("Resolução", "1mm isotrópico");
+        kv!("Referência", "WHO CNS 2021");
+        py += 4.0;
+        panel.push(Label::new(
+            fs,
+            "Inferência slice-a-slice com 4",
+            9.5,
+            col_dim(),
+            pl,
+            py,
+        ));
+        py += 13.0;
+        panel.push(Label::new(
+            fs,
+            "canais MRI simultaneos (ONNX).",
+            9.5,
+            col_dim(),
+            pl,
+            py,
+        ));
+        py += 13.0;
+        py += 6.0;
+        panel.push(Label::new(
+            fs,
+            format!("NeuroScan AI  v{}", env!("CARGO_PKG_VERSION")).as_str(),
+            9.0,
+            col_section(),
+            pl,
+            py,
+        ));
+
+        self.labels_always = always;
+        self.labels_panel = panel;
+        self.labels_snfh = snfh;
+        self.labels_menu_bar = menu_bar;
+    }
+}
