@@ -1,3 +1,8 @@
 /target
 **/*.rs.bk
 .env
+
+# Meshes 3D gerados localmente via scripts/extract_brain_mesh.py e scripts/infer_tumor_3d.py
+# Nao versionar — sao grandes (>50MB) e reproduziveis a partir dos NIfTI BraTS
+assets/models/*.obj
+assets/models/brain_meta.json
