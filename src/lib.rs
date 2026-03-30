@@ -7,8 +7,16 @@
 // ---------------------------------------------------------------------------
 
 pub const TOP_CASES: &[&str] = &[
-    "BRATS_249", "BRATS_141", "BRATS_206", "BRATS_223", "BRATS_155",
-    "BRATS_285", "BRATS_020", "BRATS_088", "BRATS_022", "BRATS_117",
+    "BRATS_249",
+    "BRATS_141",
+    "BRATS_206",
+    "BRATS_223",
+    "BRATS_155",
+    "BRATS_285",
+    "BRATS_020",
+    "BRATS_088",
+    "BRATS_022",
+    "BRATS_117",
 ];
 
 pub const CASES_DIR: &str = "assets/models/cases";
@@ -19,32 +27,32 @@ pub const CASES_DIR: &str = "assets/models/cases";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ScanMeta {
-    pub case_id:         String,
-    pub dataset:         String,
-    pub modalities:      String,
-    pub et_volume_ml:    f32,
-    pub snfh_volume_ml:  f32,
-    pub netc_volume_ml:  f32,
+    pub case_id: String,
+    pub dataset: String,
+    pub modalities: String,
+    pub et_volume_ml: f32,
+    pub snfh_volume_ml: f32,
+    pub netc_volume_ml: f32,
     pub total_volume_ml: f32,
 }
 
 impl ScanMeta {
     pub fn load(path: &str) -> Self {
         let text = match std::fs::read_to_string(path) {
-            Ok(t)  => t,
+            Ok(t) => t,
             Err(_) => return Self::default(),
         };
         let v: serde_json::Value = match serde_json::from_str(&text) {
-            Ok(v)  => v,
+            Ok(v) => v,
             Err(_) => return Self::default(),
         };
         Self {
-            case_id:         v["case_id"].as_str().unwrap_or("").to_string(),
-            dataset:         v["dataset"].as_str().unwrap_or("").to_string(),
-            modalities:      v["modalities"].as_str().unwrap_or("").to_string(),
-            et_volume_ml:    v["et_volume_ml"].as_f64().unwrap_or(0.0) as f32,
-            snfh_volume_ml:  v["snfh_volume_ml"].as_f64().unwrap_or(0.0) as f32,
-            netc_volume_ml:  v["netc_volume_ml"].as_f64().unwrap_or(0.0) as f32,
+            case_id: v["case_id"].as_str().unwrap_or("").to_string(),
+            dataset: v["dataset"].as_str().unwrap_or("").to_string(),
+            modalities: v["modalities"].as_str().unwrap_or("").to_string(),
+            et_volume_ml: v["et_volume_ml"].as_f64().unwrap_or(0.0) as f32,
+            snfh_volume_ml: v["snfh_volume_ml"].as_f64().unwrap_or(0.0) as f32,
+            netc_volume_ml: v["netc_volume_ml"].as_f64().unwrap_or(0.0) as f32,
             total_volume_ml: v["total_volume_ml"].as_f64().unwrap_or(0.0) as f32,
         }
     }
@@ -70,9 +78,9 @@ pub fn smoothstep(t: f32) -> f32 {
 /// `anim_t = 0.0` → posição direita (painel fechado)
 /// `anim_t = 1.0` → posição esquerda/abaixo-ET (painel aberto)
 pub fn snfh_pos(anim_t: f32, w: f32, box_w: f32, y_ct: f32, box_h: f32) -> (f32, f32) {
-    let ease    = smoothstep(anim_t);
+    let ease = smoothstep(anim_t);
     let right_x = w - box_w - 24.0;
-    let left_x  = 24.0_f32;
+    let left_x = 24.0_f32;
     let sx = right_x + (left_x - right_x) * ease;
     let sy = y_ct + (box_h + 12.0) * ease;
     (sx, sy)
@@ -93,17 +101,19 @@ pub fn callout_box_w(viewport_w: f32) -> f32 {
 // ---------------------------------------------------------------------------
 
 /// Menu bar constants (espelham os definidos em main.rs).
-pub const MENU_BAR_H:  f32 = 26.0;
+pub const MENU_BAR_H: f32 = 26.0;
 pub const MENU_ITEM_H: f32 = 22.0;
-pub const MENU_SEP_H:  f32 = 9.0;
+pub const MENU_SEP_H: f32 = 9.0;
 pub const MENU_DROP_W: f32 = 220.0;
 pub const MENU_TOP_XS: [f32; 3] = [8.0, 78.0, 140.0];
 pub const MENU_TOP_WS: [f32; 3] = [68.0, 58.0, 58.0];
 
 /// Retorna as entradas do menu `menu_id` como (texto, shortcut, is_separator).
-pub fn menu_entries(menu_id: i32, current_case: usize, pkg_version: &str)
-    -> Vec<(String, String, bool)>
-{
+pub fn menu_entries(
+    menu_id: i32,
+    current_case: usize,
+    pkg_version: &str,
+) -> Vec<(String, String, bool)> {
     match menu_id {
         0 => vec![
             ("Abrir Volume NIfTI...".into(), "O".into(), false),
@@ -113,7 +123,7 @@ pub fn menu_entries(menu_id: i32, current_case: usize, pkg_version: &str)
         1 => {
             let mut v: Vec<(String, String, bool)> = vec![
                 ("Caso Anterior".into(), "\u{2190}".into(), false),
-                ("Proximo Caso".into(),  "\u{2192}".into(), false),
+                ("Proximo Caso".into(), "\u{2192}".into(), false),
                 (String::new(), String::new(), true),
             ];
             for (i, id) in TOP_CASES.iter().enumerate() {
@@ -125,13 +135,21 @@ pub fn menu_entries(menu_id: i32, current_case: usize, pkg_version: &str)
                 v.push((label, String::new(), false));
             }
             v
-        },
+        }
         2 => vec![
             (format!("NeuroScan  v{}", pkg_version), String::new(), false),
-            ("nnUNet 2D  \u{00B7}  BraTS 2021".into(), String::new(), false),
+            (
+                "nnUNet 2D  \u{00B7}  BraTS 2021".into(),
+                String::new(),
+                false,
+            ),
             ("Dice 0.865".into(), String::new(), false),
             (String::new(), String::new(), true),
-            ("Diego L. Silva  \u{00B7}  github.com/diegslva".into(), String::new(), false),
+            (
+                "Diego L. Silva  \u{00B7}  github.com/diegslva".into(),
+                String::new(),
+                false,
+            ),
         ],
         _ => vec![],
     }
