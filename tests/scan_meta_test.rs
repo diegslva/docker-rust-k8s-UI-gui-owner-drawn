@@ -1,6 +1,6 @@
 //! Testes de integração para ScanMeta — parsing, defaults e caminhos.
 
-use neuroscan_core::{ScanMeta, CASES_DIR};
+use neuroscan_core::{CASES_DIR, ScanMeta};
 
 #[test]
 fn scan_meta_default_has_empty_fields() {
@@ -22,7 +22,7 @@ fn scan_meta_load_nonexistent_returns_default() {
 
 #[test]
 fn scan_meta_load_invalid_json_returns_default() {
-    let dir  = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("scan_meta.json");
     std::fs::write(&path, b"{ invalid json }").unwrap();
     let meta = ScanMeta::load(path.to_str().unwrap());
@@ -31,7 +31,7 @@ fn scan_meta_load_invalid_json_returns_default() {
 
 #[test]
 fn scan_meta_load_valid_json() {
-    let dir  = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("scan_meta.json");
     let json = r#"{
         "case_id": "BRATS_249",
@@ -46,14 +46,14 @@ fn scan_meta_load_valid_json() {
     let meta = ScanMeta::load(path.to_str().unwrap());
     assert_eq!(meta.case_id, "BRATS_249");
     assert_eq!(meta.dataset, "BraTS2021");
-    assert!((meta.et_volume_ml   - 12.5).abs() < 0.001);
+    assert!((meta.et_volume_ml - 12.5).abs() < 0.001);
     assert!((meta.snfh_volume_ml - 48.3).abs() < 0.001);
     assert!((meta.total_volume_ml - 67.9).abs() < 0.001);
 }
 
 #[test]
 fn scan_meta_load_partial_json_fills_defaults() {
-    let dir  = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("scan_meta.json");
     // Only case_id present — volumes should default to 0.0
     let json = r#"{ "case_id": "BRATS_001" }"#;

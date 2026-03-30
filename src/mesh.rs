@@ -103,7 +103,8 @@ impl Mesh {
         let centroid = if vertices.is_empty() {
             glam::Vec3::ZERO
         } else {
-            let sum = vertices.iter()
+            let sum = vertices
+                .iter()
                 .map(|v| glam::Vec3::from(v.position))
                 .fold(glam::Vec3::ZERO, |acc, v| acc + v);
             sum / vertices.len() as f32
@@ -118,7 +119,12 @@ impl Mesh {
         Self::upload(device, &vertices, &indices, centroid)
     }
 
-    fn upload(device: &Device, vertices: &[Vertex3D], indices: &[u32], centroid: glam::Vec3) -> Result<Self> {
+    fn upload(
+        device: &Device,
+        vertices: &[Vertex3D],
+        indices: &[u32],
+        centroid: glam::Vec3,
+    ) -> Result<Self> {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("vertex_buffer"),
             contents: bytemuck::cast_slice(vertices),

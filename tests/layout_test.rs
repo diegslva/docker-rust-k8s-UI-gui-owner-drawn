@@ -1,8 +1,7 @@
 //! Testes de integração para funções de layout e cálculos de posição UI.
 
 use neuroscan_core::{
-    smoothstep, snfh_pos, navigate_idx, callout_box_w,
-    TOP_CASES, menu_entries, dropdown_height,
+    TOP_CASES, callout_box_w, dropdown_height, menu_entries, navigate_idx, smoothstep, snfh_pos,
 };
 
 // --- smoothstep ---
@@ -45,38 +44,46 @@ fn smoothstep_clamps_above_one() {
 
 #[test]
 fn snfh_pos_at_zero_is_right_side() {
-    let w     = 1280.0_f32;
+    let w = 1280.0_f32;
     let box_w = callout_box_w(w);
-    let y_ct  = 720.0 * 0.14;
+    let y_ct = 720.0 * 0.14;
     let box_h = 92.0_f32;
     let (sx, sy) = snfh_pos(0.0, w, box_w, y_ct, box_h);
     let expected_x = w - box_w - 24.0;
-    assert!((sx - expected_x).abs() < 0.001, "t=0 deve estar no lado direito");
+    assert!(
+        (sx - expected_x).abs() < 0.001,
+        "t=0 deve estar no lado direito"
+    );
     assert!((sy - y_ct).abs() < 0.001, "t=0 sy deve ser y_ct");
 }
 
 #[test]
 fn snfh_pos_at_one_is_left_side() {
-    let w     = 1280.0_f32;
+    let w = 1280.0_f32;
     let box_w = callout_box_w(w);
-    let y_ct  = 720.0 * 0.14;
+    let y_ct = 720.0 * 0.14;
     let box_h = 92.0_f32;
     let (sx, sy) = snfh_pos(1.0, w, box_w, y_ct, box_h);
-    assert!((sx - 24.0).abs() < 0.001, "t=1 deve estar no lado esquerdo (x=24)");
+    assert!(
+        (sx - 24.0).abs() < 0.001,
+        "t=1 deve estar no lado esquerdo (x=24)"
+    );
     assert!((sy - (y_ct + box_h + 12.0)).abs() < 0.001);
 }
 
 #[test]
 fn snfh_pos_intermediate_is_between_endpoints() {
-    let w     = 1280.0_f32;
+    let w = 1280.0_f32;
     let box_w = callout_box_w(w);
-    let y_ct  = 720.0 * 0.14;
+    let y_ct = 720.0 * 0.14;
     let box_h = 92.0_f32;
     let (sx_0, _) = snfh_pos(0.0, w, box_w, y_ct, box_h);
     let (sx_1, _) = snfh_pos(1.0, w, box_w, y_ct, box_h);
     let (sx_m, _) = snfh_pos(0.5, w, box_w, y_ct, box_h);
-    assert!(sx_m > sx_1 && sx_m < sx_0,
-        "posição intermediária deve estar entre os extremos");
+    assert!(
+        sx_m > sx_1 && sx_m < sx_0,
+        "posição intermediária deve estar entre os extremos"
+    );
 }
 
 // --- navigate_idx ---
@@ -153,13 +160,16 @@ fn cases_menu_marks_current_case() {
 fn about_menu_contains_version() {
     let version = "0.3.0";
     let entries = menu_entries(2, 0, version);
-    assert!(entries[0].0.contains(version), "Sobre deve mostrar a versao");
+    assert!(
+        entries[0].0.contains(version),
+        "Sobre deve mostrar a versao"
+    );
 }
 
 #[test]
 fn dropdown_height_increases_with_more_items() {
     // Cases menu has more items than File menu
-    let h_file  = dropdown_height(0, 0);
+    let h_file = dropdown_height(0, 0);
     let h_cases = dropdown_height(1, 0);
     assert!(h_cases > h_file);
 }
