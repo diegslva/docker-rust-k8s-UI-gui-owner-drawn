@@ -19,11 +19,13 @@ impl Vertex3D {
     };
 }
 
-/// Mesh carregada na GPU: vertex buffer + index buffer.
+/// Mesh carregada na GPU: vertex buffer + index buffer + centroide 3D.
 pub struct Mesh {
     pub vertex_buffer: Buffer,
     pub index_buffer: Buffer,
     pub index_count: u32,
+    /// Centroide geometrico em espaco de objeto (media de todos os vertices).
+    pub centroid: glam::Vec3,
 }
 
 impl Mesh {
@@ -98,16 +100,25 @@ impl Mesh {
             index_offset += vertex_count as u32;
         }
 
+        let centroid = if vertices.is_empty() {
+            glam::Vec3::ZERO
+        } else {
+            let sum = vertices.iter()
+                .map(|v| glam::Vec3::from(v.position))
+                .fold(glam::Vec3::ZERO, |acc, v| acc + v);
+            sum / vertices.len() as f32
+        };
+
         tracing::info!(
             vertices = vertices.len(),
             triangles = indices.len() / 3,
             "mesh carregada"
         );
 
-        Self::upload(device, &vertices, &indices)
+        Self::upload(device, &vertices, &indices, centroid)
     }
 
-    fn upload(device: &Device, vertices: &[Vertex3D], indices: &[u32]) -> Result<Self> {
+    fn upload(device: &Device, vertices: &[Vertex3D], indices: &[u32], centroid: glam::Vec3) -> Result<Self> {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("vertex_buffer"),
             contents: bytemuck::cast_slice(vertices),
@@ -124,6 +135,7 @@ impl Mesh {
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,
+            centroid,
         })
     }
 }

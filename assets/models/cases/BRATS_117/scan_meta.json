@@ -1,0 +1,14 @@
+{
+  "case_id": "BRATS_117",
+  "dataset": "BraTS 2021",
+  "modalities": "FLAIR · T1w · T1ce · T2w",
+  "et_volume_ml": 118.0,
+  "snfh_volume_ml": 116.4,
+  "netc_volume_ml": 3.5,
+  "total_volume_ml": 237.9,
+  "generated": [
+    "ET",
+    "SNFH",
+    "NETC"
+  ]
+}
