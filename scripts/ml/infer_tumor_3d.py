@@ -223,7 +223,8 @@ def extract_class_mesh(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input",    "-i", default="G:/www/neuroscan.com/data/brats/Task01_BrainTumour/imagesTr/BRATS_001.nii.gz")
+    parser.add_argument("--input",    "-i", required=True,
+                        help="Caminho para o arquivo NIfTI (.nii.gz) com 4 canais MRI")
     parser.add_argument("--model",    "-m", default="assets/models/onnx/nnunet_brats_4ch.onnx")
     parser.add_argument("--meta",          default="assets/models/brain_meta.json")
     parser.add_argument("--outdir",   "-o", default="assets/models")

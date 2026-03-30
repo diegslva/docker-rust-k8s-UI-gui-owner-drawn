@@ -30,6 +30,10 @@ pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg
                 "--meta",
                 "assets/models/brain_meta.json",
             ])
+            // Garante flush imediato de stdout no Windows — defesa em profundidade
+            // (o script Python ja usa flush=True em ns_print, mas o env var cobre
+            // qualquer print() que escape sem flush explicito)
+            .env("PYTHONUNBUFFERED", "1")
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn();
@@ -107,7 +111,7 @@ pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg
 ///   VOLUME:ET:<ml> | VOLUME:SNFH:<ml> | VOLUME:NETC:<ml>
 ///   DONE
 ///   ERROR:<mensagem>
-fn parse_neuroscan_line(payload: &str) -> Option<InferMsg> {
+pub(super) fn parse_neuroscan_line(payload: &str) -> Option<InferMsg> {
     if payload == "DONE" {
         // DONE via protocolo (antes do exit code) — apenas sinaliza fase concluída
         return Some(InferMsg::Phase(InferPhase::Done));

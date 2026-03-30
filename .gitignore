@@ -7,6 +7,9 @@
 assets/models/*.obj
 assets/models/brain_meta.json
 
+# Diretorio de saida da inferencia — gerado em runtime, nao versionado
+assets/models/cases/BRATS_CUSTOM/
+
 # Pesos PyTorch e ONNX — gerenciados via Git LFS (veja .gitattributes)
 # Nao ignorados aqui; LFS cuida do armazenamento eficiente
 
