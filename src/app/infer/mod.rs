@@ -20,6 +20,7 @@ pub(crate) enum InferPhase {
     Preprocessing,
     Slicing,
     MarchingCubes,
+    #[allow(dead_code)]
     Done,
     Error(String),
 }

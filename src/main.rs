@@ -1,7 +1,6 @@
 mod app;
 mod camera;
 mod mesh;
-#[allow(dead_code)]
 mod pipeline;
 mod renderer;
 mod ui;
