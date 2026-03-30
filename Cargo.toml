@@ -35,6 +35,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rfd = "0.14"
 
+# Pipeline de inferência nativo (substitui subprocess Python)
+ort = "2.0.0-rc.12"
+ndarray = "0.16"
+nifti = { version = "0.17", features = ["ndarray_volumes"] }
+
 [profile.release]
 lto = true
 codegen-units = 1
