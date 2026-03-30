@@ -74,7 +74,7 @@ pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg
             // qualquer print() que escape sem flush explicito)
             .env("PYTHONUNBUFFERED", "1")
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn();
 
         let mut child = match child {
@@ -125,12 +125,44 @@ pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg
         let success = match child.wait() {
             Ok(status) => {
                 if !status.success() {
-                    warn!(code = ?status.code(), "subprocess Python terminou com erro");
+                    // Captura stderr para diagnostico — mostra ao usuario o que deu errado
+                    let stderr_text = child
+                        .stderr
+                        .take()
+                        .map(|mut s| {
+                            let mut buf = String::new();
+                            let _ = std::io::Read::read_to_string(&mut s, &mut buf);
+                            buf
+                        })
+                        .unwrap_or_default();
+                    let relevant_lines: Vec<&str> = stderr_text
+                        .lines()
+                        .filter(|l| {
+                            !l.is_empty()
+                                && !l.contains("provider_bridge")
+                                && !l.contains("pybind_state")
+                        })
+                        .collect();
+                    let err_summary = relevant_lines
+                        .last()
+                        .copied()
+                        .unwrap_or("erro desconhecido")
+                        .to_string();
+                    warn!(
+                        code = ?status.code(),
+                        stderr = %err_summary,
+                        "subprocess Python terminou com erro"
+                    );
+                    let _ = tx.send(InferMsg::Phase(InferPhase::Error(err_summary)));
                 }
                 status.success()
             }
             Err(e) => {
                 warn!(error = %e, "erro ao aguardar subprocess Python");
+                let _ = tx.send(InferMsg::Phase(InferPhase::Error(format!(
+                    "falha ao aguardar processo: {}",
+                    e
+                ))));
                 false
             }
         };
