@@ -1,197 +1,90 @@
-use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+//! Lancamento do pipeline de inferencia em thread de background.
+//!
+//! Usa o pipeline nativo Rust (src/pipeline/) com ort + nifti + marching cubes.
+//! Sem dependencia de Python em runtime.
+
 use std::sync::mpsc;
 
 use tracing::{info, warn};
 
 use super::{InferMsg, InferPhase};
 
-/// Verifica se Python e as dependencias necessarias estao disponiveis.
+/// Inicia o pipeline de inferencia nativo em thread de background.
 ///
-/// Executa `python -c "import ..."` de forma sincrona (~100ms).
-/// Retorna Ok com os providers ONNX disponiveis, ou Err com mensagem legivel.
-pub(crate) fn check_python_env() -> Result<String, String> {
-    let check_script = concat!(
-        "import nibabel, onnxruntime, scipy, skimage; ",
-        "import onnxruntime as ort; ",
-        "print(','.join(ort.get_available_providers()))"
-    );
-    let output = Command::new("python")
-        .args(["-c", check_script])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output();
-    match output {
-        Ok(out) if out.status.success() => {
-            let providers = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            info!(providers = %providers, "ambiente Python verificado");
-            Ok(providers)
-        }
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            warn!(stderr = %stderr, "dependencias Python faltando");
-            Err(
-                "Dependencias Python faltando. Execute: pip install nibabel onnxruntime scipy scikit-image"
-                    .to_string(),
-            )
-        }
-        Err(e) => {
-            warn!(error = %e, "Python nao encontrado");
-            Err(format!(
-                "Python nao encontrado ({}). Instale Python 3.10+ com as dependencias.",
-                e
-            ))
-        }
-    }
-}
-
-/// Inicia o subprocess Python de inferência e retorna um receiver de progresso.
-///
-/// Lê stdout linha a linha em thread dedicada, parseia o protocolo `NEUROSCAN:*`
-/// e envia `InferMsg` para a thread principal sem bloquear o render loop.
+/// Retorna um receiver de `InferMsg` para o render loop consumir.
+/// O pipeline roda inteiramente em Rust via ort (ONNX Runtime nativo).
 pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg> {
     let (tx, rx) = mpsc::channel::<InferMsg>();
     let input_path = input_path.to_string();
     let out_dir = out_dir.to_string();
 
     std::thread::spawn(move || {
-        info!(input = %input_path, outdir = %out_dir, "iniciando subprocess Python de inferencia");
+        info!(input = %input_path, outdir = %out_dir, "iniciando pipeline nativo de inferencia");
 
-        let child = Command::new("python")
-            .args([
-                "scripts/ml/infer_tumor_3d.py",
-                "--input",
-                &input_path,
-                "--outdir",
-                &out_dir,
-                "--model",
-                "assets/models/onnx/nnunet_brats_4ch.onnx",
-                "--meta",
-                "assets/models/brain_meta.json",
-            ])
-            // Garante flush imediato de stdout no Windows — defesa em profundidade
-            // (o script Python ja usa flush=True em ns_print, mas o env var cobre
-            // qualquer print() que escape sem flush explicito)
-            .env("PYTHONUNBUFFERED", "1")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn();
+        let model_path = "assets/models/onnx/nnunet_brats_4ch.onnx";
+        let meta_path = "assets/models/brain_meta.json";
 
-        let mut child = match child {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(error = %e, "falha ao iniciar subprocess Python");
-                let _ = tx.send(InferMsg::Done(false));
-                return;
-            }
-        };
-
-        // Captura stdout e stderr do processo filho.
-        // CRITICO: stderr DEVE ser drenado em thread separada para evitar deadlock.
-        // Os warnings do ONNX Runtime CUDA (~KB de texto wide-char) enchem o pipe
-        // buffer (64KB no Windows), bloqueando Python se o buffer nao for consumido.
-        let stdout = match child.stdout.take() {
-            Some(s) => s,
-            None => {
-                warn!("stdout do subprocess Python nao disponivel");
-                let _ = tx.send(InferMsg::Done(false));
-                return;
-            }
-        };
-
-        // Drena stderr em thread separada para prevenir deadlock de pipe.
-        // Le como bytes brutos e converte com lossy — stderr do ONNX Runtime
-        // contem wide-char Windows que nao e UTF-8 valido.
-        let stderr_handle = child.stderr.take().map(|mut stderr| {
-            std::thread::spawn(move || {
-                let mut raw = Vec::new();
-                let _ = std::io::Read::read_to_end(&mut stderr, &mut raw);
-                String::from_utf8_lossy(&raw).into_owned()
-            })
-        });
-
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            let line = match line {
-                Ok(l) => l,
-                Err(e) => {
-                    warn!(error = %e, "erro ao ler stdout do subprocess");
-                    break;
+        // Callback de progresso: converte PipelineMsg -> InferMsg e envia pelo canal
+        let tx_progress = tx.clone();
+        let progress = Box::new(move |msg: crate::pipeline::PipelineMsg| {
+            let infer_msg = match msg {
+                crate::pipeline::PipelineMsg::Phase(text) => {
+                    // Mapeia texto de fase para InferPhase
+                    let phase = if text.contains("NIfTI")
+                        || text.contains("Carregando")
+                        || text.contains("ONNX")
+                        || text.contains("modelo")
+                    {
+                        InferPhase::Preprocessing
+                    } else if text.contains("Inferindo") || text.contains("segmentacao") {
+                        InferPhase::Slicing
+                    } else if text.contains("superficies") || text.contains("Extraindo") {
+                        InferPhase::MarchingCubes
+                    } else {
+                        InferPhase::Preprocessing
+                    };
+                    InferMsg::Phase(phase)
+                }
+                crate::pipeline::PipelineMsg::Slice { current, total } => {
+                    InferMsg::Slice { current, total }
+                }
+                crate::pipeline::PipelineMsg::Volume {
+                    class_name,
+                    volume_ml,
+                } => {
+                    let class = match class_name.as_str() {
+                        "ET" => 1,
+                        "SNFH" => 2,
+                        "NETC" => 3,
+                        _ => 0,
+                    };
+                    InferMsg::PartialVolume { class, volume_ml }
                 }
             };
+            let _ = tx_progress.send(infer_msg);
+        });
 
-            // Processa linhas com o prefixo do protocolo
-            if let Some(payload) = line.strip_prefix("NEUROSCAN:") {
-                if let Some(msg) = parse_neuroscan_line(payload) {
-                    if tx.send(msg).is_err() {
-                        break;
-                    }
-                } else {
-                    warn!(line = %line, "linha NEUROSCAN desconhecida");
-                }
-            }
-        }
-
-        // Coleta stderr da thread de drenagem
-        let stderr_text = stderr_handle
-            .and_then(|h| h.join().ok())
-            .unwrap_or_default();
-
-        // Espera o processo terminar e envia resultado final
-        let success = match child.wait() {
-            Ok(status) => {
+        // Executa o pipeline nativo
+        match crate::pipeline::run_pipeline(&input_path, model_path, meta_path, &out_dir, progress)
+        {
+            Ok(result) => {
                 info!(
-                    code = ?status.code(),
-                    stderr_len = stderr_text.len(),
-                    "subprocess Python encerrou"
+                    case_id = %result.case_id,
+                    et_ml = result.et_volume_ml,
+                    snfh_ml = result.snfh_volume_ml,
+                    netc_ml = result.netc_volume_ml,
+                    meshes = ?result.meshes_generated,
+                    "pipeline nativo concluido com sucesso"
                 );
-                if !status.success() {
-                    // Filtra warnings irrelevantes do ONNX CUDA provider
-                    let relevant_lines: Vec<&str> = stderr_text
-                        .lines()
-                        .filter(|l| {
-                            !l.is_empty()
-                                && !l.contains("provider_bridge")
-                                && !l.contains("pybind_state")
-                                && !l.contains("CreateExecutionProviderFactory")
-                                && !l.contains("onnxruntime_providers_cuda")
-                                && !l.contains("TryGetProviderInfo")
-                                && !l.contains("[W:onnxruntime")
-                                && !l.contains("[E:onnxruntime")
-                        })
-                        .collect();
-                    let err_summary = if relevant_lines.is_empty() {
-                        // Todas as linhas foram warnings CUDA — o erro real pode estar no stdout
-                        format!(
-                            "Python exit code {}. Possivel erro de memoria ou arquivo invalido.",
-                            status.code().unwrap_or(-1)
-                        )
-                    } else {
-                        relevant_lines.last().copied().unwrap_or("erro").to_string()
-                    };
-                    warn!(
-                        code = ?status.code(),
-                        stderr_lines = relevant_lines.len(),
-                        stderr_total = stderr_text.lines().count(),
-                        error = %err_summary,
-                        "subprocess Python terminou com erro"
-                    );
-                    let _ = tx.send(InferMsg::Phase(InferPhase::Error(err_summary)));
-                }
-                status.success()
+                let _ = tx.send(InferMsg::Done(true));
             }
             Err(e) => {
-                warn!(error = %e, "erro ao aguardar subprocess Python");
-                let _ = tx.send(InferMsg::Phase(InferPhase::Error(format!(
-                    "falha ao aguardar processo: {}",
-                    e
-                ))));
-                false
+                let err_msg = format!("{:#}", e);
+                warn!(error = %err_msg, "pipeline nativo falhou");
+                let _ = tx.send(InferMsg::Phase(InferPhase::Error(err_msg)));
+                let _ = tx.send(InferMsg::Done(false));
             }
-        };
-
-        let _ = tx.send(InferMsg::Done(success));
-        info!(success, "subprocess Python de inferencia finalizado");
+        }
     });
 
     rx
@@ -199,15 +92,10 @@ pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg
 
 /// Parseia o payload de uma linha `NEUROSCAN:<payload>` e retorna o InferMsg correspondente.
 ///
-/// Formatos esperados:
-///   PHASE:preprocessing | PHASE:slicing | PHASE:marching_cubes | PHASE:done
-///   SLICE:<current>:<total>
-///   VOLUME:ET:<ml> | VOLUME:SNFH:<ml> | VOLUME:NETC:<ml>
-///   DONE
-///   ERROR:<mensagem>
+/// Mantido para testes do protocolo e eventual fallback Python.
+#[cfg(test)]
 pub(super) fn parse_neuroscan_line(payload: &str) -> Option<InferMsg> {
     if payload == "DONE" {
-        // DONE via protocolo (antes do exit code) — apenas sinaliza fase concluída
         return Some(InferMsg::Phase(InferPhase::Done));
     }
 

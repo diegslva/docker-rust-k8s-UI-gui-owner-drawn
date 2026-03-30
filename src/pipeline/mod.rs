@@ -12,6 +12,7 @@ pub(crate) mod mesh_export;
 pub(crate) mod nifti_loader;
 
 /// Resultado do pipeline completo.
+#[allow(dead_code)]
 pub(crate) struct InferResult {
     pub case_id: String,
     pub et_volume_ml: f32,
@@ -32,8 +33,7 @@ pub(crate) enum PipelineMsg {
 /// Callback para progresso — projetado para ser usado com mpsc::Sender.
 pub(crate) type ProgressFn = Box<dyn Fn(PipelineMsg) + Send>;
 
-// Constantes do pipeline (replicadas do Python)
-const INPUT_SIZE: usize = 256;
+// Constantes do pipeline
 const MIN_VOXELS_PER_CLASS: usize = 200;
 /// BraTS 1mm isotropico: 1 voxel = 1mm^3 = 0.001 mL
 const VOXEL_TO_ML: f32 = 0.001;

@@ -146,10 +146,9 @@ pub(crate) struct App {
     pub(crate) show_home: bool,
     pub(crate) home_labels: Vec<Label>,
     pub(crate) home_anim_t: f32,
-    // Ambiente Python — verificado no primeiro uso
-    pub(crate) python_env_checked: bool,
+    // Erro de inferencia — exibido na home screen
     pub(crate) python_env_error: Option<String>,
-    // Inferência real — file picker + subprocess Python
+    // Inferência — pipeline nativo Rust (ort + nifti)
     pub(crate) dialog_rx: Option<mpsc::Receiver<std::path::PathBuf>>,
     pub(crate) infer_active: bool,
     pub(crate) infer_rx: Option<mpsc::Receiver<crate::app::infer::InferMsg>>,
@@ -200,7 +199,6 @@ impl App {
             show_home: true,
             home_labels: Vec::new(),
             home_anim_t: 0.0,
-            python_env_checked: false,
             python_env_error: None,
             dialog_rx: None,
             infer_active: false,
