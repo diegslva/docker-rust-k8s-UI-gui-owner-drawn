@@ -86,7 +86,10 @@ pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg
             }
         };
 
-        // Captura stdout do processo filho e parseia linha a linha
+        // Captura stdout e stderr do processo filho.
+        // CRITICO: stderr DEVE ser drenado em thread separada para evitar deadlock.
+        // Os warnings do ONNX Runtime CUDA (~KB de texto wide-char) enchem o pipe
+        // buffer (64KB no Windows), bloqueando Python se o buffer nao for consumido.
         let stdout = match child.stdout.take() {
             Some(s) => s,
             None => {
@@ -95,6 +98,15 @@ pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg
                 return;
             }
         };
+
+        // Drena stderr em thread separada para prevenir deadlock de pipe
+        let stderr_handle = child.stderr.take().map(|mut stderr| {
+            std::thread::spawn(move || {
+                let mut buf = String::new();
+                let _ = std::io::Read::read_to_string(&mut stderr, &mut buf);
+                buf
+            })
+        });
 
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
@@ -106,47 +118,41 @@ pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg
                 }
             };
 
-            // Só processa linhas com o prefixo do protocolo
+            // Processa linhas com o prefixo do protocolo
             if let Some(payload) = line.strip_prefix("NEUROSCAN:") {
                 if let Some(msg) = parse_neuroscan_line(payload) {
-                    // Se o canal foi fechado (receiver dropado), para de enviar
                     if tx.send(msg).is_err() {
                         break;
                     }
                 } else {
-                    // Linha com prefixo mas payload desconhecido — log e continua
                     warn!(line = %line, "linha NEUROSCAN desconhecida");
                 }
             }
-            // Linhas sem o prefixo são descartadas silenciosamente
         }
+
+        // Coleta stderr da thread de drenagem
+        let stderr_text = stderr_handle
+            .and_then(|h| h.join().ok())
+            .unwrap_or_default();
 
         // Espera o processo terminar e envia resultado final
         let success = match child.wait() {
             Ok(status) => {
                 if !status.success() {
-                    // Captura stderr para diagnostico — mostra ao usuario o que deu errado
-                    let stderr_text = child
-                        .stderr
-                        .take()
-                        .map(|mut s| {
-                            let mut buf = String::new();
-                            let _ = std::io::Read::read_to_string(&mut s, &mut buf);
-                            buf
-                        })
-                        .unwrap_or_default();
                     let relevant_lines: Vec<&str> = stderr_text
                         .lines()
                         .filter(|l| {
                             !l.is_empty()
                                 && !l.contains("provider_bridge")
                                 && !l.contains("pybind_state")
+                                && !l.contains("CreateExecutionProviderFactory")
+                                && !l.contains("onnxruntime_providers_cuda")
                         })
                         .collect();
                     let err_summary = relevant_lines
                         .last()
                         .copied()
-                        .unwrap_or("erro desconhecido")
+                        .unwrap_or("erro desconhecido no subprocess Python")
                         .to_string();
                     warn!(
                         code = ?status.code(),
