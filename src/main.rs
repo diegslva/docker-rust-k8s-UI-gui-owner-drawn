@@ -103,8 +103,9 @@ const AUTO_ROTATE_IDLE_S: f32 = 5.0;   // segundos sem interação para iniciar 
 const AUTO_ROTATE_SPEED:  f32 = 0.008; // rad/frame a 60fps ≈ 10°/seg
 
 // --- Animações ---
-const TRANSITION_DURATION: f32 = 0.45; // segundos para dissolve entre casos
-const PULSE_FREQ:           f32 = 1.2;  // Hz do pulso nos pontos de ancoragem
+const TRANSITION_DURATION:    f32 = 0.45; // segundos para dissolve entre casos
+const PULSE_FREQ:              f32 = 1.2;  // Hz do pulso nos pontos de ancoragem
+const SPLASH_FADEOUT_DURATION: f32 = 0.70; // segundos para fade-out da splash
 
 /// Meshes permanentes do cérebro (compartilhadas entre todos os casos)
 const BRAIN_DEFS: &[(&str, [f32; 3], f32)] = &[
@@ -142,6 +143,12 @@ struct App {
     labels_panel:        Vec<Label>,
     show_panel:          bool,
     scan:                ScanMeta,
+    // Splash screen
+    splash_done:   bool,
+    splash_t:      f32,
+    splash_fade:   f32,   // 0..1 durante fade-out
+    splash_rx:     Option<mpsc::Receiver<Vec<LoadedMesh>>>,
+    splash_labels: Vec<Label>,
     // Navegação entre casos
     current_case:        usize,
     // Animação de transição entre casos
@@ -167,6 +174,11 @@ impl App {
             labels_panel:  Vec::new(),
             show_panel:    false,
             scan:          ScanMeta::default(),
+            splash_done:   false,
+            splash_t:      0.0,
+            splash_fade:   0.0,
+            splash_rx:     None,
+            splash_labels: Vec::new(),
             current_case:  0,
             transition_phase:  0.0,
             transition_target: 0,
@@ -267,6 +279,97 @@ impl App {
     fn col_value()   -> Color { Color::rgb(203, 213, 225) }
     fn col_section() -> Color { Color::rgb( 71,  85, 105) }
     fn col_sep()     -> [f32; 4] { [0.12, 0.17, 0.26, 0.70] }
+
+    // -----------------------------------------------------------------------
+    // Splash screen — labels e primitivas
+    // -----------------------------------------------------------------------
+
+    fn build_splash_labels(&mut self, size: PhysicalSize<u32>) {
+        let Some(gpu) = &mut self.gpu else { return };
+        let w  = size.width  as f32;
+        let h  = size.height as f32;
+        let cy = h / 2.0 + 28.0;  // centro da animação, levemente abaixo do meio
+        let fs = gpu.font_system_mut();
+
+        let mut title = Label::new_bold(fs, "NeuroScan", 50.0, Color::rgb(222, 234, 248), 0.0, 0.0);
+        title.x = (w - title.measured_width()) / 2.0;
+        title.y = cy - 122.0;
+
+        let mut sub = Label::new(fs, "Visualizador Medico 3D", 15.5, Color::rgb(88, 128, 168), 0.0, 0.0);
+        sub.x = (w - sub.measured_width()) / 2.0;
+        sub.y = title.y + title.line_height() + 5.0;
+
+        self.splash_labels = vec![title, sub];
+    }
+
+    /// Geometria animada da splash: fundo escuro, scan-line MRI, anéis pulsantes, arco orbital.
+    fn build_splash_primitives(&self, w: f32, h: f32) -> Prim2DBatch {
+        let mut b  = Prim2DBatch::new();
+        let cx     = w / 2.0;
+        let cy     = h / 2.0 + 28.0;
+        let t      = self.splash_t;
+        let orbit  = self.spinner_angle;
+
+        // Fundo
+        b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, 1.0], w, h);
+
+        // Linha de varredura horizontal — estilo scanner MRI
+        let scan_y = ((t * 0.36).fract() * h).clamp(0.0, h - 2.0);
+        b.rect(0.0, scan_y - 1.0, w, 2.5, [0.30, 0.58, 0.88, 0.13], w, h);
+        b.rect(w * 0.25, scan_y - 0.5, w * 0.50, 1.0, [0.52, 0.78, 1.0, 0.20], w, h);
+
+        // Três anéis pulsantes (defasados em 1/3 do ciclo)
+        let ring_n     = 24_usize;
+        let ring_r_max = 88.0_f32;
+        let cycle      = 2.8_f32;
+        for i in 0..3usize {
+            let phase = ((t / cycle) + (i as f32 / 3.0)).fract();
+            let r     = phase * ring_r_max;
+            let alpha = (1.0 - phase).powf(1.8) * 0.30;
+            if alpha < 0.01 { continue; }
+            for j in 0..ring_n {
+                let a0 = (j     as f32 / ring_n as f32) * std::f32::consts::TAU;
+                let a1 = ((j+1) as f32 / ring_n as f32) * std::f32::consts::TAU;
+                b.line(cx + r * a0.cos(), cy + r * a0.sin(),
+                       cx + r * a1.cos(), cy + r * a1.sin(),
+                       [0.22, 0.52, 0.86, alpha], 1.2, w, h);
+            }
+        }
+
+        // Trilha circular do arco orbital
+        let orbit_r = 44.0_f32;
+        for j in 0..36usize {
+            let a0 = (j     as f32 / 36.0) * std::f32::consts::TAU;
+            let a1 = ((j+1) as f32 / 36.0) * std::f32::consts::TAU;
+            b.line(cx + orbit_r * a0.cos(), cy + orbit_r * a0.sin(),
+                   cx + orbit_r * a1.cos(), cy + orbit_r * a1.sin(),
+                   [0.12, 0.20, 0.36, 0.26], 1.0, w, h);
+        }
+
+        // Arco orbital com cauda gradiente
+        let arc_n    = 28_usize;
+        let arc_span = std::f32::consts::TAU * (260.0 / 360.0);
+        let tail_a   = orbit - arc_span;
+        for j in 0..arc_n {
+            let t0 = j     as f32 / arc_n as f32;
+            let t1 = (j+1) as f32 / arc_n as f32;
+            let a0 = tail_a + t0 * arc_span;
+            let a1 = tail_a + t1 * arc_span;
+            let br = t0.powf(1.3);
+            b.line(cx + orbit_r * a0.cos(), cy + orbit_r * a0.sin(),
+                   cx + orbit_r * a1.cos(), cy + orbit_r * a1.sin(),
+                   [0.42 + 0.22 * br, 0.65 + 0.16 * br, 1.0, br * 0.88],
+                   2.0, w, h);
+        }
+
+        // Ponto brilhante na cabeça do arco
+        let hx = cx + orbit_r * orbit.cos();
+        let hy = cy + orbit_r * orbit.sin();
+        let hr = 2.6_f32;
+        b.rect(hx - hr, hy - hr, hr * 2.0, hr * 2.0, [0.70, 0.90, 1.0, 0.92], w, h);
+
+        b
+    }
 
     fn rgb_f(c: [f32; 3]) -> Color {
         Color::rgb((c[0]*255.0) as u8, (c[1]*255.0) as u8, (c[2]*255.0) as u8)
@@ -654,37 +757,40 @@ impl ApplicationHandler for App {
         };
         self.gpu = Some(gpu);
 
-        // Carregar cérebro permanente
-        {
-            let device = &self.gpu.as_ref().unwrap().device;
+        // Construir labels da splash (rápido — sem IO)
+        let size = window.inner_size();
+        self.build_splash_labels(size);
+
+        // Carregar todos os meshes em thread de fundo para não bloquear a splash
+        let device = self.gpu.as_ref().unwrap().device.clone();
+        let (tx, rx) = mpsc::channel::<Vec<LoadedMesh>>();
+        std::thread::spawn(move || {
+            // Tumores do caso inicial — slots 0..TUMOR_COUNT
+            let case_dir = format!("{}/{}", CASES_DIR, TOP_CASES[0]);
+            let tumor_defs = [
+                (format!("{}/tumor_et.obj",   case_dir), ET_COLOR,   1.0_f32),
+                (format!("{}/tumor_snfh.obj", case_dir), SNFH_COLOR, 1.0_f32),
+                (format!("{}/tumor_netc.obj", case_dir), NETC_COLOR, 1.0_f32),
+            ];
+            let mut all: Vec<LoadedMesh> = tumor_defs.iter()
+                .filter_map(|(path, tint, alpha)| {
+                    Mesh::from_obj(&device, path).ok()
+                        .map(|m| LoadedMesh { mesh: m, tint: *tint, alpha: *alpha })
+                })
+                .collect();
+            // Cérebro permanente a seguir
             for (path, tint, alpha) in BRAIN_DEFS {
-                match Mesh::from_obj(device, path) {
-                    Ok(m)  => self.meshes.push(LoadedMesh { mesh: m, tint: *tint, alpha: *alpha }),
-                    Err(e) => warn!(error = %e, path, "mesh cerebro nao encontrada"),
+                if let Ok(m) = Mesh::from_obj(&device, path) {
+                    all.push(LoadedMesh { mesh: m, tint: *tint, alpha: *alpha });
                 }
             }
-        }
-
-        // Pré-alocar slots para os tumores no início do vetor
-        // (inserimos 3 placeholders e depois substituímos via load_tumor_meshes)
-        for _ in 0..TUMOR_COUNT {
-            self.meshes.insert(0, LoadedMesh {
-                mesh:  Mesh::from_obj(&self.gpu.as_ref().unwrap().device,
-                    &format!("{}/{}/tumor_et.obj", CASES_DIR, TOP_CASES[0]))
-                    .unwrap_or_else(|_| panic!("caso inicial nao encontrado: {}", TOP_CASES[0])),
-                tint:  [1.0; 3],
-                alpha: 1.0,
-            });
-        }
-
-        self.load_tumor_meshes(TOP_CASES[0]);
-        info!(total_meshes = self.meshes.len(), "scene carregada");
+            let _ = tx.send(all);
+        });
+        self.splash_rx = Some(rx);
+        info!("splash iniciada — carregamento de meshes em background");
 
         self.camera.target   = glam::Vec3::ZERO;
         self.camera.distance = 4.0;
-
-        let size = window.inner_size();
-        self.build_labels(size);
         self.last_frame       = Instant::now();
         self.last_interaction = Instant::now();
         window.request_redraw();
@@ -746,13 +852,98 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(new_size) => {
                 debug!(w = new_size.width, h = new_size.height, "resize");
                 if let Some(gpu) = &mut self.gpu { gpu.resize(new_size); }
-                self.build_labels(new_size);
+                if self.splash_done {
+                    self.build_labels(new_size);
+                } else {
+                    self.build_splash_labels(new_size);
+                }
                 if let Some(w) = &self.window { w.request_redraw(); }
             }
 
             WindowEvent::RedrawRequested => {
                 let dt = self.last_frame.elapsed().as_secs_f32().min(0.05);
                 self.last_frame = Instant::now();
+
+                // ─────────────────────────────────────────────────────────────
+                // SPLASH SCREEN — exibida enquanto os meshes carregam em fundo
+                // ─────────────────────────────────────────────────────────────
+                if !self.splash_done {
+                    self.splash_t      += dt;
+                    self.spinner_angle += dt * std::f32::consts::TAU * 0.55;
+
+                    // Checar chegada das meshes
+                    if let Some(rx) = &self.splash_rx {
+                        if let Ok(new_meshes) = rx.try_recv() {
+                            self.meshes = new_meshes;
+                            for i in 0..TUMOR_COUNT {
+                                self.centroids[i] = self.meshes.get(i)
+                                    .map_or(glam::Vec3::ZERO, |m| m.mesh.centroid);
+                            }
+                            self.scan = ScanMeta::load(
+                                &ScanMeta::case_path(TOP_CASES[0]));
+                            self.splash_rx = None;
+                            // Construir labels do viewer agora para o fade-out
+                            let sz = PhysicalSize::new(
+                                self.gpu.as_ref().map_or(1280, |g| g.config.width),
+                                self.gpu.as_ref().map_or(720,  |g| g.config.height),
+                            );
+                            self.build_labels(sz);
+                            info!(meshes = self.meshes.len(), "splash: meshes prontas");
+                        }
+                    }
+
+                    // Avançar fade-out apenas quando meshes chegaram
+                    if self.splash_rx.is_none() {
+                        self.splash_fade += dt / SPLASH_FADEOUT_DURATION;
+                        if self.splash_fade >= 1.0 {
+                            self.splash_done  = true;
+                            self.splash_fade  = 1.0;
+                            self.spinner_angle = 0.0;
+                        }
+                    }
+
+                    let sz = PhysicalSize::new(
+                        self.gpu.as_ref().map_or(1280, |g| g.config.width),
+                        self.gpu.as_ref().map_or(720,  |g| g.config.height),
+                    );
+                    let sw = sz.width  as f32;
+                    let sh = sz.height as f32;
+                    let cam = self.camera.build_uniform(sz.width, sz.height);
+
+                    if self.splash_rx.is_some() {
+                        // Splash puro: sem 3D, apenas animação + título
+                        let prims      = self.build_splash_primitives(sw, sh);
+                        let label_refs: Vec<&Label> = self.splash_labels.iter().collect();
+                        if let Some(gpu) = &mut self.gpu {
+                            if let Err(e) = gpu.render(&cam, &[], &label_refs, &prims) {
+                                warn!(error = %e, "erro render splash");
+                            }
+                        }
+                    } else {
+                        // Fade-out: cena 3D completa revelando por baixo do overlay
+                        let overlay = (1.0 - self.splash_fade).max(0.0);
+                        let pulse_t  = self.pulse_t;
+                        let spinner  = self.spinner_angle;
+                        let mut prims = self.build_primitives(
+                            &cam.mvp, sw, sh, pulse_t, 0.0, spinner);
+                        if overlay > 0.01 {
+                            prims.rect(0.0, 0.0, sw, sh,
+                                [0.03, 0.04, 0.08, overlay], sw, sh);
+                        }
+                        let label_refs: Vec<&Label> = self.labels_always.iter().collect();
+                        if let Some(gpu) = &mut self.gpu {
+                            let entries: Vec<MeshEntry> = self.meshes.iter()
+                                .map(|m| MeshEntry { mesh: &m.mesh, tint: m.tint, alpha: m.alpha })
+                                .collect();
+                            if let Err(e) = gpu.render(&cam, &entries, &label_refs, &prims) {
+                                warn!(error = %e, "erro render fade-out splash");
+                            }
+                        }
+                    }
+
+                    if let Some(w) = &self.window { w.request_redraw(); }
+                    return;
+                }
 
                 // ── Microanimação: rotação automática após inatividade ──────
                 if self.last_interaction.elapsed().as_secs_f32() > AUTO_ROTATE_IDLE_S {
@@ -762,7 +953,7 @@ impl ApplicationHandler for App {
                 // ── Pulso dos pontos de ancoragem ──────────────────────────
                 self.pulse_t += dt;
 
-                // ── Spinner: gira apenas enquanto há transição ative ────────
+                // ── Spinner: gira apenas enquanto há transição ativa ────────
                 if self.transition_phase > 0.0 {
                     self.spinner_angle += dt * std::f32::consts::TAU * 0.75;
                 }
