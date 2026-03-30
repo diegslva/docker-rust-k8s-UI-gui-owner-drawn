@@ -147,7 +147,8 @@ struct App {
     labels_always: Vec<Label>,
     labels_panel: Vec<Label>,
     labels_snfh: Vec<Label>, // callout SNFH — posição mutada diretamente (sem re-shaping)
-    labels_menu: Vec<Label>, // dropdown do menu ativo
+    labels_menu_bar: Vec<Label>, // "Arquivo | Casos | Sobre" — overlay Pass 2 (acima do fundo)
+    labels_menu: Vec<Label>, // dropdown do menu ativo — overlay Pass 2
     show_panel: bool,
     // Menu bar
     menu_open: i32,       // -1 = fechado; 0=Arquivo, 1=Casos, 2=Sobre
@@ -193,6 +194,7 @@ impl App {
             labels_always: Vec::new(),
             labels_panel: Vec::new(),
             labels_snfh: Vec::new(),
+            labels_menu_bar: Vec::new(),
             labels_menu: Vec::new(),
             show_panel: false,
             menu_open: -1,
@@ -611,11 +613,16 @@ impl App {
         let mut always: Vec<Label> = Vec::new();
         let mut panel: Vec<Label> = Vec::new();
         let mut snfh: Vec<Label> = Vec::new();
+        // Labels do topo da barra ficam no overlay (Pass 2), NÃO em `always` (Pass 1).
+        // Motivo: o fundo do menu bar é uma primitiva de overlay; se o texto fosse Pass 1,
+        // o fundo de Pass 2 o cobriria. Ao colocar aqui, texto e fundo estão no mesmo pass
+        // e o texto é submetido ao TextRenderer APÓS as primitivas de fundo — z correto.
+        let mut menu_bar: Vec<Label> = Vec::new();
 
         // ── Barra de menu — itens do topo ────────────────────────────────────
         {
-            // Tom quase-branco frio (cool white): legível sobre o navy escuro do menu bar
-            // sem perder a identidade azul do layout. Contraste WCAG AA > 14:1.
+            // Tom quase-branco frio (cool white): legível sobre o navy escuro do menu bar.
+            // Contraste WCAG AA > 14:1 sobre #0a0f1e.
             let menu_col = Color::rgb(236, 242, 255);
             let bar_y = (MENU_BAR_H - 11.5_f32 * 1.25) / 2.0;
             let tops = [
@@ -624,7 +631,7 @@ impl App {
                 ("Sobre", MENU_TOP_XS[2]),
             ];
             for (text, lx) in &tops {
-                always.push(Label::new(
+                menu_bar.push(Label::new(
                     fs,
                     text,
                     11.5,
@@ -1013,6 +1020,7 @@ impl App {
         self.labels_always = always;
         self.labels_panel = panel;
         self.labels_snfh = snfh;
+        self.labels_menu_bar = menu_bar;
     }
 
     // -----------------------------------------------------------------------
@@ -2218,12 +2226,13 @@ impl ApplicationHandler for App {
                     label_refs.extend(self.labels_panel.iter());
                 }
 
-                // Texto de overlay: itens do dropdown (Pass 2, acima do texto de cena)
-                let overlay_label_refs: Vec<&Label> = if self.menu_open >= 0 {
-                    self.labels_menu.iter().collect()
-                } else {
-                    Vec::new()
-                };
+                // Texto de overlay (Pass 2): barra de menu + itens do dropdown.
+                // SEMPRE inclui labels_menu_bar (Arquivo/Casos/Sobre) pois o fundo
+                // da barra é uma primitiva de overlay — texto e fundo no mesmo pass.
+                let mut overlay_label_refs: Vec<&Label> = self.labels_menu_bar.iter().collect();
+                if self.menu_open >= 0 {
+                    overlay_label_refs.extend(self.labels_menu.iter());
+                }
 
                 if let Some(gpu) = &mut self.gpu {
                     let entries: Vec<MeshEntry> = self
