@@ -84,28 +84,15 @@ impl App {
                     self.window_shown = true;
                 }
             } else {
-                let overlay = (1.0 - self.splash_fade).max(0.0);
-                let pulse_t = self.pulse_t;
-                let spinner = self.spinner_angle;
-                let mut prims =
-                    self.build_primitives(&cam.mvp, sw, sh, pulse_t, 0.0, spinner, false);
-                if overlay > 0.01 {
-                    prims.rect(0.0, 0.0, sw, sh, [0.03, 0.04, 0.08, overlay], sw, sh);
-                }
-                let label_refs: Vec<&Label> = self.labels_always.iter().collect();
+                // Splash fade-out: elementos da splash desvanecem sob overlay escuro.
+                // NÃO renderiza cena 3D — transição vai direto para home screen.
+                let fade_out = self.splash_fade; // 0→1: splash desaparece para negro
+                let mut prims = self.build_splash_primitives(sw, sh);
+                prims.rect(0.0, 0.0, sw, sh, [0.03, 0.04, 0.08, fade_out], sw, sh);
+                let label_refs: Vec<&Label> = self.splash_labels.iter().collect();
                 if let Some(gpu) = &mut self.gpu {
-                    let entries: Vec<MeshEntry> = self
-                        .meshes
-                        .iter()
-                        .map(|m| MeshEntry {
-                            mesh: &m.mesh,
-                            tint: m.tint,
-                            alpha: m.alpha,
-                        })
-                        .collect();
                     let empty_overlay = Prim2DBatch::new();
-                    if let Err(e) =
-                        gpu.render(&cam, &entries, &label_refs, &prims, &empty_overlay, &[])
+                    if let Err(e) = gpu.render(&cam, &[], &label_refs, &prims, &empty_overlay, &[])
                     {
                         warn!(error = %e, "erro render fade-out splash");
                     }
@@ -132,6 +119,28 @@ impl App {
         };
 
         if let Some(path) = picked_path {
+            // Verificar ambiente Python na primeira vez
+            if !self.python_env_checked {
+                self.python_env_checked = true;
+                match crate::app::infer::pipeline::check_python_env() {
+                    Ok(providers) => {
+                        info!(providers = %providers, "ambiente Python OK");
+                        self.python_env_error = None;
+                    }
+                    Err(msg) => {
+                        warn!(error = %msg, "ambiente Python indisponivel");
+                        self.python_env_error = Some(msg);
+                    }
+                }
+            }
+            if self.python_env_error.is_some() {
+                // Ambiente indisponível — volta para home com erro visível
+                self.show_home = true;
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+                return;
+            }
             let path_str = path.display().to_string();
             let out_dir = "assets/models/cases/BRATS_CUSTOM";
             info!(input = %path_str, outdir = %out_dir, "iniciando inferencia NeuroScan");
