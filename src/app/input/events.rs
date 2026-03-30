@@ -53,6 +53,17 @@ impl App {
                         },
                         Key::Named(NamedKey::ArrowRight) => self.navigate_case(1),
                         Key::Named(NamedKey::ArrowLeft) => self.navigate_case(-1),
+                        Key::Named(NamedKey::Escape) => {
+                            // Voltar à tela inicial
+                            if !self.show_home && !self.infer_active {
+                                self.show_home = true;
+                                let sz = PhysicalSize::new(
+                                    self.gpu.as_ref().map_or(1280, |g| g.config.width),
+                                    self.gpu.as_ref().map_or(720, |g| g.config.height),
+                                );
+                                self.build_home_labels(sz);
+                            }
+                        }
                         _ => {}
                     }
                 }
