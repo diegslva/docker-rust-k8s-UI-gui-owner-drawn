@@ -7,12 +7,8 @@
 assets/models/*.obj
 assets/models/brain_meta.json
 
-# Pesos PyTorch — grandes, nao versionados (baixar via scp do RunPod apos treino)
-assets/models/checkpoints/*.pth
-assets/models/checkpoints/*.pt
-
-# Exportacoes ONNX — grandes, nao versionadas (regenerar via scripts/ml/train_brats_4ch.py)
-assets/models/onnx/*.onnx
+# Pesos PyTorch e ONNX — gerenciados via Git LFS (veja .gitattributes)
+# Nao ignorados aqui; LFS cuida do armazenamento eficiente
 
 # Historico de treino — versionado (pequeno, util para rastrear evolucao dos experimentos)
 # assets/models/training/*.json  <- nao ignorar
