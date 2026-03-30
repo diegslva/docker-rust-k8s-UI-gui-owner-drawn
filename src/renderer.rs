@@ -26,24 +26,34 @@ const FONT_BOLD: &[u8] = include_bytes!("../assets/fonts/Inter-Bold.ttf");
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+/// Alinhamento minimo de offset de uniform buffer dinamico (wgpu/Vulkan: 256 bytes).
+const UNIFORM_ALIGN: usize = 256;
+/// Numero maximo de meshes renderizaveis por frame.
+const MAX_MESHES: usize = 8;
+
 /// Estado da pipeline grafica wgpu.
 ///
-/// Suporta dois modos de renderizacao por frame:
-/// - Pipeline 2D: gradiente radial fullscreen (shader.wgsl)
-/// - Pipeline 3D: mesh com iluminacao Phong + depth buffer (shader3d.wgsl)
-/// - Overlay de texto: glyphon sobre qualquer combinacao dos dois
+/// Suporta tres camadas por frame:
+/// - Pipeline 2D:   gradiente radial fullscreen (shader.wgsl)
+/// - Pipeline 3D:   N meshes com iluminacao Phong + depth buffer + cor independente por mesh
+/// - Overlay texto: glyphon sobre qualquer combinacao dos dois
+///
+/// A cor por mesh e implementada via dynamic uniform offset: cada mesh escreve seu
+/// CameraUniform (com tint proprio) num slot de 256 bytes dentro do mesmo buffer,
+/// e o render pass seleciona o slot correto com set_bind_group(..., &[offset]).
 pub struct GpuState {
     surface: Surface<'static>,
     pub device: Device,
     queue: Queue,
     pub config: SurfaceConfiguration,
-    // Pipeline 2D — gradiente radial
+    // Pipeline 2D -- gradiente radial
     pipeline_2d: RenderPipeline,
-    // Pipeline 3D — mesh Phong
+    // Pipeline 3D -- mesh Phong com multi-mesh via dynamic offset
     pipeline_3d: RenderPipeline,
     #[allow(dead_code)]
-    // mantido vivo: usado na criacao da pipeline_3d, referenciado pelo bind group
     camera_bind_group_layout: BindGroupLayout,
+    /// Buffer com MAX_MESHES slots de UNIFORM_ALIGN bytes cada.
+    /// Slot i = CameraUniform da mesh i (com tint proprio).
     camera_buffer: Buffer,
     camera_bind_group: BindGroup,
     depth_texture: Texture,
@@ -119,10 +129,11 @@ impl GpuState {
         };
         surface.configure(&device, &config);
 
-        // Pipeline 2D — gradiente radial (sem depth, sem vertex buffer)
+        // Pipeline 2D -- gradiente radial (sem depth, sem vertex buffer)
         let pipeline_2d = Self::build_pipeline_2d(&device, &config);
 
-        // Bind group layout para o uniform da camera 3D
+        // Bind group layout com dynamic offset habilitado.
+        // has_dynamic_offset: true permite selecionar o slot correto em set_bind_group.
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("camera_bgl"),
@@ -131,27 +142,35 @@ impl GpuState {
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<CameraUniform>() as u64,
+                        ),
                     },
                     count: None,
                 }],
             });
 
-        // Camera buffer — preenchido a cada frame com CameraUniform
+        // Buffer multi-slot: MAX_MESHES * UNIFORM_ALIGN bytes.
+        // Cada slot de 256 bytes guarda um CameraUniform completo (160 bytes + padding).
         let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("camera_buffer"),
-            size: std::mem::size_of::<CameraUniform>() as u64,
+            size: (MAX_MESHES * UNIFORM_ALIGN) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
+        // Bind group aponta para o buffer inteiro; o offset dinamico seleciona o slot.
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("camera_bg"),
             layout: &camera_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: camera_buffer.as_entire_binding(),
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &camera_buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(std::mem::size_of::<CameraUniform>() as u64),
+                }),
             }],
         });
 
@@ -159,7 +178,7 @@ impl GpuState {
         let depth_texture =
             Self::create_depth_texture(&device, size.width.max(1), size.height.max(1));
 
-        // Pipeline 3D — mesh Phong com depth buffer
+        // Pipeline 3D -- mesh Phong com depth buffer
         let pipeline_3d = Self::build_pipeline_3d(&device, &config, &camera_bind_group_layout);
 
         // Sistema de texto
@@ -172,7 +191,7 @@ impl GpuState {
         let viewport = Viewport::new(&device, &cache);
         let mut text_atlas = TextAtlas::new(&device, &queue, &cache, surface_format);
         // TextRenderer precisa conhecer o depth format do render pass para compatibilidade.
-        // depth_write_enabled: false — texto nao escreve no depth buffer, apenas e desenhado por cima.
+        // depth_write_enabled: false -- texto nao escreve no depth buffer.
         let text_renderer = TextRenderer::new(
             &mut text_atlas,
             &device,
@@ -186,7 +205,7 @@ impl GpuState {
             }),
         );
 
-        info!("GpuState inicializado: pipeline 2D + 3D + texto");
+        info!("GpuState inicializado: pipeline 2D + 3D (multi-mesh) + texto");
 
         Ok(Self {
             surface,
@@ -226,7 +245,6 @@ impl GpuState {
         self.config.width = new_size.width;
         self.config.height = new_size.height;
         self.surface.configure(&self.device, &self.config);
-        // Recriar depth texture no novo tamanho
         self.depth_texture =
             Self::create_depth_texture(&self.device, new_size.width, new_size.height);
         debug!(
@@ -236,20 +254,35 @@ impl GpuState {
         );
     }
 
-    /// Renderiza um frame com gradiente 2D + mesh 3D + overlay de texto.
+    /// Renderiza um frame completo: gradiente 2D + N meshes 3D + overlay de texto.
     ///
-    /// `camera_uniform`: produzido pelo OrbitalCamera do App (ja com yaw atualizado).
-    /// `mesh`: a mesh 3D carregada (skull.obj ou outra).
-    /// `labels`: overlay de texto sobre a cena 3D.
+    /// `camera_uniform`: base (MVP, luz) produzido pelo OrbitalCamera.
+    /// `meshes`: slice de pares `(mesh, tint_rgb)` — cada mesh renderizada com sua cor.
+    ///           Ordem importa: meshes anteriores sao cobertas pelas posteriores via depth.
+    /// `labels`: overlay de texto glyphon renderizado por ultimo (sempre visiveis).
     pub fn render(
         &mut self,
         camera_uniform: &CameraUniform,
-        mesh: &Mesh,
+        meshes: &[(&Mesh, [f32; 3])],
         labels: &[&Label],
     ) -> Result<()> {
-        // Atualizar camera buffer na GPU
-        self.queue
-            .write_buffer(&self.camera_buffer, 0, cast_slice(&[*camera_uniform]));
+        // --- Escrever uniforms de todas as meshes antes do render pass ---
+        // Cada mesh ocupa um slot de UNIFORM_ALIGN bytes no camera_buffer.
+        // O tint de cada mesh e injetado aqui; o restante do uniform e identico (mesma camera).
+        for (i, (_, tint)) in meshes.iter().enumerate() {
+            debug_assert!(i < MAX_MESHES, "numero de meshes excede MAX_MESHES={MAX_MESHES}");
+            let mut u = *camera_uniform;
+            u.tint = *tint;
+            // Slot i comeca no offset i * UNIFORM_ALIGN
+            let offset = (i * UNIFORM_ALIGN) as u64;
+            // write_buffer exige slice de bytes alinhada ao tamanho do uniform.
+            // Copiamos o uniform para um array de 256 bytes (zero-padded).
+            let mut slot = [0u8; UNIFORM_ALIGN];
+            let u_arr = [u];
+            let bytes = cast_slice::<CameraUniform, u8>(&u_arr);
+            slot[..bytes.len()].copy_from_slice(bytes);
+            self.queue.write_buffer(&self.camera_buffer, offset, &slot);
+        }
 
         // Atualizar resolucao do viewport glyphon
         self.viewport.update(
@@ -302,7 +335,6 @@ impl GpuState {
         let view = output
             .texture
             .create_view(&TextureViewDescriptor::default());
-
         let depth_view = self
             .depth_texture
             .create_view(&TextureViewDescriptor::default());
@@ -345,12 +377,15 @@ impl GpuState {
             pass.set_pipeline(&self.pipeline_2d);
             pass.draw(0..6, 0..1);
 
-            // 2. Mesh 3D sobre o gradiente (com depth test + depth write)
+            // 2. N meshes 3D com cores independentes via dynamic offset
             pass.set_pipeline(&self.pipeline_3d);
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            for (i, (mesh, _)) in meshes.iter().enumerate() {
+                let dynamic_offset = (i * UNIFORM_ALIGN) as u32;
+                pass.set_bind_group(0, &self.camera_bind_group, &[dynamic_offset]);
+                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            }
 
             // 3. Texto overlay (glyphon gerencia sua propria pipeline internamente)
             self.text_renderer
@@ -419,7 +454,6 @@ impl GpuState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
-            // Pipeline 2D nao escreve no depth buffer (gradiente e fundo, nao objeto 3D)
             depth_stencil: Some(DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: false,

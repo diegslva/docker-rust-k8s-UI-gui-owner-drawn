@@ -21,7 +21,16 @@ use winit::window::{CursorIcon, Icon, Window, WindowAttributes, WindowId};
 const WINDOW_WIDTH: f64 = 1280.0;
 const WINDOW_HEIGHT: f64 = 720.0;
 const ICON_BYTES: &[u8] = include_bytes!("../assets/icon_256x256.png");
+
+/// Meshes NeuroScan: cerebro (FLAIR) + tumor (segmentacao BraTS)
 const BRAIN_OBJ: &str = "assets/models/brain.obj";
+const TUMOR_OBJ: &str = "assets/models/tumor.obj";
+
+/// Cores das meshes (RGB linear)
+/// Cerebro: substancia cinzenta (cinza rosado)
+const BRAIN_COLOR: [f32; 3] = [0.82, 0.72, 0.70];
+/// Tumor: vermelho-laranja vivo para contraste maximo
+const TUMOR_COLOR: [f32; 3] = [0.90, 0.28, 0.18];
 
 /// Sensibilidade do drag de mouse (radianos por pixel).
 const MOUSE_SENSITIVITY: f32 = 0.005;
@@ -36,7 +45,9 @@ const PITCH_LIMIT: f32 = 1.5;
 struct App {
     window: Option<Arc<Window>>,
     gpu: Option<GpuState>,
-    mesh: Option<Mesh>,
+    /// Meshes com suas cores: (mesh, tint_rgb).
+    /// Indice 0 = cerebro, indice 1 = tumor (se carregado).
+    meshes: Vec<(Mesh, [f32; 3])>,
     camera: OrbitalCamera,
     labels: Vec<Label>,
     last_frame: Instant,
@@ -50,8 +61,8 @@ impl App {
         Self {
             window: None,
             gpu: None,
-            mesh: None,
-            camera: OrbitalCamera::new(9.0),
+            meshes: Vec::new(),
+            camera: OrbitalCamera::new(4.0),
             labels: Vec::new(),
             last_frame: Instant::now(),
             mouse_pressed: false,
@@ -65,9 +76,16 @@ impl App {
         let h = size.height as f32;
         let fs = gpu.font_system_mut();
 
+        let has_tumor = self.meshes.len() > 1;
+        let subtitle = if has_tumor {
+            "FLAIR + Tumor (BraTS)  \u{00B7}  Arraste para girar  \u{00B7}  Scroll para zoom"
+        } else {
+            "FLAIR  \u{00B7}  Arraste para girar  \u{00B7}  Scroll para zoom"
+        };
+
         let mut title = Label::new_bold(
             fs,
-            "NeuroScan  \u{00B7}  Cerebro 3D (BraTS FLAIR)",
+            "NeuroScan  \u{00B7}  Cerebro 3D",
             32.0,
             Color::WHITE,
             0.0,
@@ -78,7 +96,7 @@ impl App {
 
         let mut sub = Label::new(
             fs,
-            "Arraste para girar  \u{00B7}  Scroll para zoom",
+            subtitle,
             16.0,
             Color::rgb(140, 150, 165),
             0.0,
@@ -137,7 +155,7 @@ impl ApplicationHandler for App {
 
         let icon = load_embedded_icon().ok();
         let mut attrs = WindowAttributes::default()
-            .with_title("NeuroScan [Phase 5 — Brain 3D FLAIR]")
+            .with_title("NeuroScan [Phase 5B — Brain 3D + Tumor]")
             .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT));
         if let Some(ic) = icon {
             attrs = attrs.with_window_icon(Some(ic));
@@ -168,15 +186,28 @@ impl ApplicationHandler for App {
         self.gpu = Some(gpu);
 
         let device = &self.gpu.as_ref().unwrap().device;
+
+        // Carregar cerebro (obrigatorio)
         match Mesh::from_obj(device, BRAIN_OBJ) {
             Ok(m) => {
-                info!("cerebro carregado com sucesso");
-                self.mesh = Some(m);
+                info!("cerebro carregado");
+                self.meshes.push((m, BRAIN_COLOR));
             }
             Err(err) => warn!(error = %err, "falha ao carregar brain.obj"),
         }
 
-        // Camera centrada no cerebro — mesh normalizado em [-1, 1]
+        // Carregar tumor (opcional — nao critico se ausente)
+        match Mesh::from_obj(device, TUMOR_OBJ) {
+            Ok(m) => {
+                info!("tumor carregado");
+                self.meshes.push((m, TUMOR_COLOR));
+            }
+            Err(err) => warn!(error = %err, "tumor.obj nao encontrado (apenas cerebro): {err}"),
+        }
+
+        info!(meshes = self.meshes.len(), "meshes carregadas");
+
+        // Camera centralizada no mesh normalizado [-1, 1]
         self.camera.target = glam::Vec3::ZERO;
         self.camera.distance = 4.0;
 
@@ -212,14 +243,13 @@ impl ApplicationHandler for App {
                         };
                         w.set_cursor(cursor);
                     }
-                    // Ao soltar, resetar posicao para evitar salto no proximo drag
                     if state == ElementState::Released {
                         self.mouse_pos = None;
                     }
                 }
             }
 
-            // --- Mouse: movimento — drag para rotacionar ---
+            // --- Mouse: movimento -- drag para rotacionar ---
             WindowEvent::CursorMoved { position, .. } => {
                 if self.mouse_pressed {
                     if let Some((prev_x, prev_y)) = self.mouse_pos {
@@ -233,7 +263,7 @@ impl ApplicationHandler for App {
                 self.mouse_pos = Some((position.x, position.y));
             }
 
-            // --- Mouse: scroll — zoom ---
+            // --- Mouse: scroll -- zoom ---
             WindowEvent::MouseWheel { delta, .. } => {
                 let scroll = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
@@ -262,9 +292,11 @@ impl ApplicationHandler for App {
                 let h = self.gpu.as_ref().map_or(720, |g| g.config.height);
                 let cam_uniform = self.camera.build_uniform(w, h);
 
-                if let (Some(gpu), Some(mesh)) = (&mut self.gpu, &self.mesh) {
+                if let Some(gpu) = &mut self.gpu {
+                    let mesh_refs: Vec<(&Mesh, [f32; 3])> =
+                        self.meshes.iter().map(|(m, c)| (m, *c)).collect();
                     let label_refs: Vec<&Label> = self.labels.iter().collect();
-                    if let Err(err) = gpu.render(&cam_uniform, mesh, &label_refs) {
+                    if let Err(err) = gpu.render(&cam_uniform, &mesh_refs, &label_refs) {
                         warn!(error = %err, "erro no render");
                     }
                 }

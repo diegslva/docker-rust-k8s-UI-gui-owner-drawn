@@ -1,11 +1,13 @@
-// Shader 3D — iluminacao Phong com cor de osso
-// Recebe posicao + normal por vertice, aplica MVP e calcula diffuse + ambient.
+// Shader 3D -- iluminacao Phong com cor configuravel por mesh (tint)
+// Suporta multi-mesh via dynamic uniform offset: cada mesh tem seu proprio tint.
 
 struct CameraUniform {
     mvp:          mat4x4<f32>,
     model_normal: mat4x4<f32>,
     light_dir:    vec3<f32>,
     _pad:         f32,
+    tint:         vec3<f32>,
+    _pad2:        f32,
 }
 
 @group(0) @binding(0)
@@ -35,7 +37,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let normal = normalize(in.world_normal);
     let light  = normalize(camera.light_dir);
 
-    // Phong: ambient + diffuse (sem specular para aparencia de osso fosco)
+    // Phong: ambient + diffuse (sem specular para aparencia organica)
     let ambient  = 0.18;
     let diffuse  = max(dot(normal, light), 0.0) * 0.75;
 
@@ -44,7 +46,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let intensity = ambient + diffuse + fill;
 
-    // Cor de tecido cerebral: cinza rosado (substancia cinzenta)
-    let brain_color = vec3<f32>(0.82, 0.72, 0.70);
-    return vec4<f32>(brain_color * intensity, 1.0);
+    // Cor configuravel por mesh via uniform (tint)
+    return vec4<f32>(camera.tint * intensity, 1.0);
 }
