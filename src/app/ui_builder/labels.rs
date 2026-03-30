@@ -213,6 +213,19 @@ impl App {
             always.push(nav);
         }
 
+        // ── Botão "Voltar" — retorna à home screen (canto inferior esquerdo) ──
+        {
+            let back = Label::new(
+                fs,
+                "Esc  \u{2190}  Tela inicial",
+                10.5,
+                Color::rgb(90, 130, 180),
+                28.0,
+                h - 20.0,
+            );
+            always.push(back);
+        }
+
         // ── Marca d'água "NeuroScan" ─────────────────────────────────────────
         {
             let mut wm = Label::new_bold(
