@@ -2,7 +2,17 @@
 **/*.rs.bk
 .env
 
-# Meshes 3D gerados localmente via scripts/extract_brain_mesh.py e scripts/infer_tumor_3d.py
+# Meshes 3D gerados localmente via scripts/ml/extract_brain_mesh.py e scripts/ml/infer_tumor_3d.py
 # Nao versionar — sao grandes (>50MB) e reproduziveis a partir dos NIfTI BraTS
 assets/models/*.obj
 assets/models/brain_meta.json
+
+# Pesos PyTorch — grandes, nao versionados (baixar via scp do RunPod apos treino)
+assets/models/checkpoints/*.pth
+assets/models/checkpoints/*.pt
+
+# Exportacoes ONNX — grandes, nao versionadas (regenerar via scripts/ml/train_brats_4ch.py)
+assets/models/onnx/*.onnx
+
+# Historico de treino — versionado (pequeno, util para rastrear evolucao dos experimentos)
+# assets/models/training/*.json  <- nao ignorar
