@@ -143,12 +143,18 @@ struct App {
     labels_panel:        Vec<Label>,
     show_panel:          bool,
     scan:                ScanMeta,
+    // Janela
+    window_shown:  bool,
     // Splash screen
     splash_done:   bool,
     splash_t:      f32,
     splash_fade:   f32,   // 0..1 durante fade-out
     splash_rx:     Option<mpsc::Receiver<Vec<LoadedMesh>>>,
     splash_labels: Vec<Label>,
+    // Inferência real — file picker + subprocess Python
+    dialog_rx:     Option<mpsc::Receiver<std::path::PathBuf>>,
+    infer_active:  bool,
+    infer_rx:      Option<mpsc::Receiver<bool>>, // true = ok, false = erro
     // Navegação entre casos
     current_case:        usize,
     // Animação de transição entre casos
@@ -174,11 +180,15 @@ impl App {
             labels_panel:  Vec::new(),
             show_panel:    false,
             scan:          ScanMeta::default(),
+            window_shown:  false,
             splash_done:   false,
             splash_t:      0.0,
             splash_fade:   0.0,
             splash_rx:     None,
             splash_labels: Vec::new(),
+            dialog_rx:     None,
+            infer_active:  false,
+            infer_rx:      None,
             current_case:  0,
             transition_phase:  0.0,
             transition_target: 0,
@@ -433,10 +443,14 @@ impl App {
             } else { String::new() };
             always.push(Label::new(fs,
                 "\u{25CF}  ET  \u{00B7}  Enhancing Tumor",
-                10.5, Self::rgb_f(ET_COLOR), ex + pad, ey + 14.0));
+                10.5, Self::rgb_f(ET_COLOR), ex + pad, ey + 13.0));
             if !vol.is_empty() {
-                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, ex + pad, ey + 32.0));
+                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, ex + pad, ey + 30.0));
             }
+            // Microlegenda clínica
+            always.push(Label::new(fs,
+                "Realce pós-contraste · barreira comprometida",
+                8.8, Self::col_dim(), ex + pad, ey + 52.0));
         }
 
         // SNFH — canto superior direito
@@ -448,25 +462,33 @@ impl App {
             } else { String::new() };
             always.push(Label::new(fs,
                 "\u{25CF}  SNFH  \u{00B7}  Peritumoral Edema",
-                10.5, Self::rgb_f(SNFH_COLOR), sx + pad, sy + 14.0));
+                10.5, Self::rgb_f(SNFH_COLOR), sx + pad, sy + 13.0));
             if !vol.is_empty() {
-                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, sx + pad, sy + 32.0));
+                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, sx + pad, sy + 30.0));
             }
+            // Microlegenda clínica
+            always.push(Label::new(fs,
+                "Edema e infiltracao peritumoral",
+                8.8, Self::col_dim(), sx + pad, sy + 52.0));
         }
 
         // NETC — centro inferior
         {
             let nx = (w / 2.0 - box_w / 2.0).max(24.0);
-            let ny = (h - 155.0).max(y_ct + 64.0 + 20.0);
+            let ny = (h - 175.0).max(y_ct + 84.0 + 20.0);
             let vol = if self.scan.netc_volume_ml > 0.0 {
                 format!("{:.1} mL", self.scan.netc_volume_ml)
             } else { String::new() };
             always.push(Label::new(fs,
                 "\u{25CF}  NETC  \u{00B7}  Necrotic Core",
-                10.5, Self::rgb_f(NETC_COLOR), nx + pad, ny + 14.0));
+                10.5, Self::rgb_f(NETC_COLOR), nx + pad, ny + 13.0));
             if !vol.is_empty() {
-                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, nx + pad, ny + 32.0));
+                always.push(Label::new_bold(fs, &vol, 13.0, Color::WHITE, nx + pad, ny + 30.0));
             }
+            // Microlegenda clínica
+            always.push(Label::new(fs,
+                "Nucleo necrotico hipóxico · centro da lesão",
+                8.8, Self::col_dim(), nx + pad, ny + 52.0));
         }
 
         // ── Indicador de caso (centro inferior) ──────────────────────────────
@@ -478,6 +500,26 @@ impl App {
             nav.x = (w - nav.measured_width()) / 2.0;
             nav.y = h - 22.0;
             always.push(nav);
+        }
+
+        // ── Marca d'água "NeuroScan" — visível apenas na cena 3D, muito opaco ──
+        {
+            let mut wm = Label::new_bold(fs, "NeuroScan", 96.0,
+                Color::rgba(210, 222, 238, 11), 0.0, 0.0);
+            wm.x = (w - wm.measured_width()) / 2.0;
+            wm.y = (h - wm.line_height()) / 2.0 + 20.0;
+            always.push(wm);
+        }
+
+        // ── Rodapé técnico (canto inferior direito) ───────────────────────────
+        {
+            let footer = format!(
+                "NeuroScan AI  \u{00B7}  v{}  \u{00B7}  nnUNet 2D  \u{00B7}  BraTS 2021  \u{00B7}  Dice 0.865",
+                env!("CARGO_PKG_VERSION"));
+            let mut ft = Label::new(fs, &footer, 9.0, Self::col_section(), 0.0, 0.0);
+            ft.x = (w - ft.measured_width() - 18.0).max(0.0);
+            ft.y = h - 16.0;
+            always.push(ft);
         }
 
         // ── Legenda inferior esquerda ─────────────────────────────────────────
@@ -545,8 +587,22 @@ impl App {
         py += 8.0;
 
         section!("CLASSIFICACAO TUMORAL");
-        line_text!("WHO 2021  ·  Grau IV",        Self::col_value(), 11.0);
-        line_text!("Glioblastoma Multiforme",      Self::col_header(), 11.5);
+        line_text!("WHO 2021  ·  Grau IV",   Self::col_value(),  11.0);
+        line_text!("Glioblastoma Multiforme", Self::col_header(), 11.5);
+        py += 6.0;
+
+        section!("RISCO CLINICO");
+        kv!("Grau WHO",      "IV  —  Alto Risco");
+        kv!("IDH Status",    "Wild-type (wt)");
+        kv!("MGMT Metil.",   "A investigar");
+        kv!("Ki-67",         "> 30%");
+        kv!("Critérios",     "RANO 2010");
+        kv!("Sobrevida med.","14 – 16 meses");
+        py += 3.0;
+        panel.push(Label::new(fs,
+            "* Dados pop. BraTS 2021. Nao substitui laudo.",
+            8.5, Self::col_section(), pl, py));
+        py += 14.0;
         py += 8.0;
 
         section!("VOLUMES SEGMENTADOS");
@@ -565,16 +621,23 @@ impl App {
         py += 22.0;
 
         section!("METODOLOGIA");
-        for line in &[
-            "Segmentacao automatica por rede",
-            "neural convolucional 2D treinada",
-            "em 484 casos (BraTS 2021).",
+        kv!("Segmentacao", "nnUNet 2D Slice");
+        kv!("Treinamento",  "484 casos BraTS 2021");
+        kv!("Acuracia",     "Dice 0.865");
+        kv!("Modalidades",  "FLAIR/T1w/T1ce/T2w");
+        kv!("Resolucao",    "1mm isotropico");
+        kv!("Referência",   "WHO CNS 2021");
+        py += 4.0;
+        panel.push(Label::new(fs,
             "Inferencia slice-a-slice com 4",
-            "canais MRI simultaneos.",
-        ] {
-            panel.push(Label::new(fs, line, 10.0, Self::col_dim(), pl, py));
-            py += 14.0;
-        }
+            9.5, Self::col_dim(), pl, py)); py += 13.0;
+        panel.push(Label::new(fs,
+            "canais MRI simultaneos (ONNX).",
+            9.5, Self::col_dim(), pl, py)); py += 13.0;
+        py += 6.0;
+        panel.push(Label::new(fs,
+            format!("NeuroScan AI  v{}", env!("CARGO_PKG_VERSION")).as_str(),
+            9.0, Self::col_section(), pl, py));
 
         self.labels_always = always;
         self.labels_panel  = panel;
@@ -592,11 +655,12 @@ impl App {
         pulse_t:       f32,
         transition:    f32,
         spinner_angle: f32,
+        infer_active:  bool,
     ) -> Prim2DBatch {
         let mut b    = Prim2DBatch::new();
         let y_ct     = h * 0.14;
         let box_w    = (w * 0.175).max(190.0).min(240.0);
-        let box_h    = 64.0_f32;
+        let box_h    = 84.0_f32;  // aumentado para acomodar microlegenda clínica
         let bg       = [0.04, 0.06, 0.11, 0.88_f32];
         // Pulso: raio do ponto de ancoragem oscila suavemente
         let dot_r    = 3.5 + 1.5 * (pulse_t * std::f32::consts::TAU * PULSE_FREQ).sin().abs();
@@ -645,15 +709,40 @@ impl App {
             let ph = h * 0.80;
             b.rect(px, py, pw, ph, [0.03, 0.05, 0.09, 0.90], w, h);
             b.rect(px, py, 2.0, ph, [0.35, 0.55, 0.85, 0.40], w, h);
-            // Separadores
-            for sep_y in &[
-                h * 0.14 + 82.0,
-                h * 0.14 + 136.0,
-                h * 0.14 + 214.0,
-                h * 0.14 + 242.0,
-            ] {
-                b.rect(px + 10.0, *sep_y, pw - 20.0, 1.0, Self::col_sep(), w, h);
+        }
+
+        // Overlay de inferência real — spinner grande centralizado
+        if infer_active {
+            b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, 0.72], w, h);
+            let cx = w / 2.0;
+            let cy = h / 2.0;
+            let r  = 52.0_f32;
+            // Trilha
+            for i in 0..48usize {
+                let a0 = (i     as f32 / 48.0) * std::f32::consts::TAU;
+                let a1 = ((i+1) as f32 / 48.0) * std::f32::consts::TAU;
+                b.line(cx + r * a0.cos(), cy + r * a0.sin(),
+                       cx + r * a1.cos(), cy + r * a1.sin(),
+                       [0.16, 0.24, 0.40, 0.28], 1.2, w, h);
             }
+            // Arco com cauda
+            let arc_span = std::f32::consts::TAU * (250.0 / 360.0);
+            let tail_a   = spinner_angle - arc_span;
+            for j in 0..36usize {
+                let t0 = j     as f32 / 36.0;
+                let t1 = (j+1) as f32 / 36.0;
+                let a0 = tail_a + t0 * arc_span;
+                let a1 = tail_a + t1 * arc_span;
+                let br = t0.powf(1.3);
+                b.line(cx + r * a0.cos(), cy + r * a0.sin(),
+                       cx + r * a1.cos(), cy + r * a1.sin(),
+                       [0.48 + 0.18 * br, 0.70 + 0.12 * br, 1.0, br * 0.90],
+                       2.5, w, h);
+            }
+            let hx = cx + r * spinner_angle.cos();
+            let hy = cy + r * spinner_angle.sin();
+            let hr = 3.2_f32;
+            b.rect(hx - hr, hy - hr, hr * 2.0, hr * 2.0, [0.72, 0.90, 1.0, 0.96], w, h);
         }
 
         // Overlay de transição — dissolve sinusoidal suave
@@ -740,9 +829,11 @@ impl ApplicationHandler for App {
         if self.window.is_some() { return; }
 
         let icon = load_embedded_icon().ok();
+        // with_visible(false): evita o flash branco antes do primeiro frame wgpu
         let mut attrs = WindowAttributes::default()
             .with_title("NeuroScan — Visualizador Medico 3D")
-            .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT));
+            .with_inner_size(LogicalSize::new(WINDOW_WIDTH, WINDOW_HEIGHT))
+            .with_visible(false);
         if let Some(ic) = icon { attrs = attrs.with_window_icon(Some(ic)); }
 
         let window = match event_loop.create_window(attrs) {
@@ -807,6 +898,20 @@ impl ApplicationHandler for App {
                     match &event.logical_key {
                         Key::Character(ch) => match ch.as_str() {
                             "i" | "I" => { self.show_panel = !self.show_panel; }
+                            "o" | "O" => {
+                                // Abrir file picker nativo em thread separada — não bloqueia o render loop
+                                if self.dialog_rx.is_none() && !self.infer_active {
+                                    let (tx, rx) = mpsc::channel();
+                                    std::thread::spawn(move || {
+                                        let path = rfd::FileDialog::new()
+                                            .set_title("Selecionar volume NIfTI (.nii.gz)")
+                                            .add_filter("NIfTI", &["gz", "nii"])
+                                            .pick_file();
+                                        if let Some(p) = path { let _ = tx.send(p); }
+                                    });
+                                    self.dialog_rx = Some(rx);
+                                }
+                            }
                             _ => {}
                         },
                         Key::Named(NamedKey::ArrowRight) => self.navigate_case( 1),
@@ -919,13 +1024,18 @@ impl ApplicationHandler for App {
                                 warn!(error = %e, "erro render splash");
                             }
                         }
+                        // Revelar a janela após o primeiro frame renderizado — sem flash branco
+                        if !self.window_shown {
+                            if let Some(w) = &self.window { w.set_visible(true); }
+                            self.window_shown = true;
+                        }
                     } else {
                         // Fade-out: cena 3D completa revelando por baixo do overlay
                         let overlay = (1.0 - self.splash_fade).max(0.0);
                         let pulse_t  = self.pulse_t;
                         let spinner  = self.spinner_angle;
                         let mut prims = self.build_primitives(
-                            &cam.mvp, sw, sh, pulse_t, 0.0, spinner);
+                            &cam.mvp, sw, sh, pulse_t, 0.0, spinner, false);
                         if overlay > 0.01 {
                             prims.rect(0.0, 0.0, sw, sh,
                                 [0.03, 0.04, 0.08, overlay], sw, sh);
@@ -943,6 +1053,104 @@ impl ApplicationHandler for App {
 
                     if let Some(w) = &self.window { w.request_redraw(); }
                     return;
+                }
+
+                // ── File dialog: checar se usuário selecionou arquivo ──────
+                let picked_path: Option<std::path::PathBuf> = if let Some(rx) = &self.dialog_rx {
+                    match rx.try_recv() {
+                        Ok(p)  => { self.dialog_rx = None; Some(p) }
+                        Err(_) => None,
+                    }
+                } else { None };
+
+                if let Some(path) = picked_path {
+                    // Disparar inferência Python em background
+                    let path_str   = path.display().to_string();
+                    let out_dir    = "assets/models/infer".to_string();
+                    let device_bg  = self.gpu.as_ref().unwrap().device.clone();
+                    let (tx, rx)   = mpsc::channel::<bool>();
+                    let out_clone  = out_dir.clone();
+                    std::thread::spawn(move || {
+                        info!(input = %path_str, "iniciando inferencia Python");
+                        let status = std::process::Command::new("python")
+                            .args(["scripts/ml/infer_single.py",
+                                   "--input",      &path_str,
+                                   "--output-dir", &out_clone,
+                                   "--model",      "assets/models/onnx/nnunet_brats_4ch.onnx",
+                                   "--meta",       "assets/models/brain_meta.json"])
+                            .status();
+                        let ok = matches!(status, Ok(s) if s.success());
+                        // Quando Python terminar, carregar os OBJs em GPU na mesma thread
+                        if ok {
+                            // Pré-carregar meshes para enviar já prontas
+                            let defs = [
+                                (format!("{}/tumor_et.obj",   out_clone), ET_COLOR,   1.0_f32),
+                                (format!("{}/tumor_snfh.obj", out_clone), SNFH_COLOR, 1.0_f32),
+                                (format!("{}/tumor_netc.obj", out_clone), NETC_COLOR, 1.0_f32),
+                            ];
+                            let _meshes: Vec<LoadedMesh> = defs.iter()
+                                .filter_map(|(p, t, a)| {
+                                    Mesh::from_obj(&device_bg, p).ok()
+                                        .map(|m| LoadedMesh { mesh: m, tint: *t, alpha: *a })
+                                })
+                                .collect();
+                            // Nota: enviar meshes via channel não é possível sem Arc<Mutex>
+                            // (Device é Clone mas Buffer não é Send em todas as versões).
+                            // Sinalizamos ok=true e o main thread carrega do disco.
+                        }
+                        let _ = tx.send(ok);
+                    });
+                    self.infer_rx    = Some(rx);
+                    self.infer_active = true;
+                    info!("inferencia iniciada");
+                }
+
+                // ── Inferência: checar conclusão ────────────────────────────
+                if let Some(rx) = &self.infer_rx {
+                    if let Ok(ok) = rx.try_recv() {
+                        self.infer_rx     = None;
+                        self.infer_active = false;
+                        if ok {
+                            // Carregar meshes inferidas e substituir slots 0..2
+                            let device = self.gpu.as_ref().unwrap().device.clone();
+                            let out_dir = "assets/models/infer";
+                            let defs = [
+                                (format!("{}/tumor_et.obj",   out_dir), ET_COLOR,   1.0_f32),
+                                (format!("{}/tumor_snfh.obj", out_dir), SNFH_COLOR, 1.0_f32),
+                                (format!("{}/tumor_netc.obj", out_dir), NETC_COLOR, 1.0_f32),
+                            ];
+                            let new_meshes: Vec<LoadedMesh> = {
+                                defs.iter()
+                                    .filter_map(|(p, t, a)| {
+                                        Mesh::from_obj(&device, p).ok()
+                                            .map(|m| LoadedMesh { mesh: m, tint: *t, alpha: *a })
+                                    })
+                                    .collect()
+                            };
+                            for (i, lm) in new_meshes.into_iter().enumerate() {
+                                if i < self.meshes.len() { self.meshes[i] = lm; }
+                            }
+                            for i in 0..TUMOR_COUNT {
+                                self.centroids[i] = self.meshes.get(i)
+                                    .map_or(glam::Vec3::ZERO, |m| m.mesh.centroid);
+                            }
+                            let infer_meta = format!("{}/scan_meta.json", out_dir);
+                            self.scan = ScanMeta::load(&infer_meta);
+                            let sz = PhysicalSize::new(
+                                self.gpu.as_ref().map_or(1280, |g| g.config.width),
+                                self.gpu.as_ref().map_or(720,  |g| g.config.height),
+                            );
+                            self.build_labels(sz);
+                            info!("caso inferido carregado com sucesso");
+                        } else {
+                            warn!("inferencia Python falhou ou foi cancelada");
+                        }
+                    }
+                }
+
+                // ── Spinner de inferência (independente da transição de caso) ──
+                if self.infer_active {
+                    self.spinner_angle += dt * std::f32::consts::TAU * 0.75;
                 }
 
                 // ── Microanimação: rotação automática após inatividade ──────
@@ -1005,8 +1213,9 @@ impl ApplicationHandler for App {
                 if rebuild_needed { self.build_labels(size); }
 
                 let cam   = self.camera.build_uniform(size.width, size.height);
+                let infer = self.infer_active;
                 let prims = self.build_primitives(&cam.mvp, size.width as f32, size.height as f32,
-                    self.pulse_t, self.transition_phase, self.spinner_angle);
+                    self.pulse_t, self.transition_phase, self.spinner_angle, infer);
 
                 let mut label_refs: Vec<&Label> = self.labels_always.iter().collect();
                 if self.show_panel { label_refs.extend(self.labels_panel.iter()); }
