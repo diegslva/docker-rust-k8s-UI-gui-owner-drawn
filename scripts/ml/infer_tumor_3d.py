@@ -1,14 +1,16 @@
 """
-infer_tumor_3d.py -- NeuroScan: nnUNet 2D -> segmentacao volumetrica 3D -> 3 OBJs (alta resolucao)
+infer_tumor_3d.py -- NeuroScan: nnUNet 2D 4-canais -> segmentacao volumetrica 3D -> 3 OBJs
 
 Pipeline:
-  NIfTI FLAIR -> 155 fatias -> nnUNet ONNX -> mascara 3D (ET+SNFH+NETC)
+  NIfTI 4-canais (FLAIR,T1w,T1ce,T2w) -> 155 fatias -> nnUNet ONNX -> mascara 3D (ET+SNFH+NETC)
   -> upsample 2x -> Marching Cubes por classe -> 3 OBJs alinhados ao brain.obj
 
-Uso:
-    uv run --project G:/www/neuroscan.com python scripts/infer_tumor_3d.py
+  Compativel tambem com modelo legado 1-canal (--channels 1) para testes comparativos.
 
-Requer: nibabel, scikit-image, scipy, numpy, onnxruntime, Pillow
+Uso:
+    python scripts/ml/infer_tumor_3d.py --input <BRATS_001.nii.gz> --model assets/models/onnx/nnunet_brats_4ch.onnx
+
+Requer: nibabel, scikit-image, scipy, numpy, onnxruntime
 """
 
 from __future__ import annotations
@@ -21,13 +23,14 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import onnxruntime as ort
-from PIL import Image
 from scipy.ndimage import zoom, gaussian_filter
 from skimage.measure import marching_cubes
 
-FLAIR_CHANNEL: int = 0
-INPUT_SIZE: int    = 256
-NUM_CLASSES: int   = 4
+INPUT_SIZE: int  = 256
+NUM_CLASSES: int = 4
+# Ordem dos canais no arquivo NIfTI Decathlon Task01:
+# index 0=FLAIR, 1=T1w, 2=T1ce, 3=T2w
+ALL_CHANNELS: int = 4
 
 TUMOR_CLASSES: dict[int, dict] = {
     1: {"name": "ET",   "full": "Enhancing Tumor",   "obj": "tumor_et.obj"},
@@ -37,13 +40,33 @@ TUMOR_CLASSES: dict[int, dict] = {
 MIN_VOXELS_PER_CLASS = 200
 
 
-def load_flair_volume(path: Path) -> np.ndarray:
-    img  = nib.load(str(path))
-    data = img.get_fdata(dtype=np.float32)
+def load_volume(path: Path, n_channels: int) -> np.ndarray:
+    """Carrega volume NIfTI.
+    Se n_channels=4: retorna (H, W, D, 4) — todos os canais MRI.
+    Se n_channels=1: retorna (H, W, D)   — apenas FLAIR (canal 0), compatibilidade legada.
+    """
+    data = nib.load(str(path)).get_fdata(dtype=np.float32)
     print(f"Volume shape: {data.shape}")
-    flair = data[..., FLAIR_CHANNEL] if data.ndim == 4 else data
-    print(f"FLAIR canal {FLAIR_CHANNEL} -> {flair.shape}")
-    return flair
+    if n_channels == 4:
+        if data.ndim != 4 or data.shape[3] < 4:
+            raise ValueError(f"Modelo 4-canais requer NIfTI (H,W,D,4), mas shape={data.shape}")
+        print(f"Canais: FLAIR(0) T1w(1) T1ce(2) T2w(3)")
+        return data[..., :4]   # (H, W, D, 4)
+    else:
+        vol = data[..., 0] if data.ndim == 4 else data
+        print(f"FLAIR canal 0 -> {vol.shape}")
+        return vol             # (H, W, D)
+
+
+def zscore_normalize_channel(vol: np.ndarray) -> np.ndarray:
+    """Z-score sobre voxels nao-zero (mascara cerebral)."""
+    mask = vol > 0
+    if mask.sum() == 0:
+        return vol
+    m, s = vol[mask].mean(), vol[mask].std()
+    out = np.zeros_like(vol)
+    out[mask] = (vol[mask] - m) / (s + 1e-8)
+    return out
 
 
 def load_meta(meta_path: Path) -> tuple[np.ndarray, float, float]:
@@ -56,34 +79,52 @@ def load_meta(meta_path: Path) -> tuple[np.ndarray, float, float]:
     return center, scale, upsample
 
 
-def normalize_slice(s: np.ndarray) -> np.ndarray:
-    s_min, s_max = s.min(), s.max()
-    if s_max - s_min > 1e-8:
-        return ((s - s_min) / (s_max - s_min)).astype(np.float32)
-    return np.zeros_like(s, dtype=np.float32)
+def resize_slice(arr: np.ndarray, size: int = INPUT_SIZE) -> np.ndarray:
+    h, w = arr.shape
+    if (h, w) == (size, size):
+        return arr
+    return zoom(arr, (size / h, size / w), order=1).astype(np.float32)
 
 
-def run_inference_volume(flair: np.ndarray, session: ort.InferenceSession, input_name: str) -> np.ndarray:
-    H, W, D  = flair.shape
-    mask_3d  = np.zeros((H, W, D), dtype=np.uint8)
+def run_inference_volume(volume: np.ndarray, session: ort.InferenceSession,
+                         input_name: str, n_channels: int) -> np.ndarray:
+    if n_channels == 4:
+        H, W, D, _ = volume.shape
+        # Pre-normaliza cada canal inteiro (z-score sobre mascara cerebral)
+        norm_vols = [zscore_normalize_channel(volume[:, :, :, c]) for c in range(4)]
+    else:
+        H, W, D = volume.shape
+        norm_vols = None
+
+    mask_3d   = np.zeros((H, W, D), dtype=np.uint8)
     non_empty = tumor_slices = 0
-    print(f"Inferencia: {D} fatias axiais ({INPUT_SIZE}x{INPUT_SIZE})...")
+    print(f"Inferencia {n_channels}-canal: {D} fatias axiais ({INPUT_SIZE}x{INPUT_SIZE})...")
 
     for z in range(D):
-        s = flair[:, :, z]
-        if s.max() < 1e-6:
-            continue
+        if n_channels == 4:
+            # Fatia de cada canal ja normalizado
+            slices = [norm_vols[c][:, :, z] for c in range(4)]
+            if all(s.max() < 1e-6 for s in slices):
+                continue
+            tensor = np.stack([resize_slice(s) for s in slices], axis=0)[np.newaxis, ...]
+        else:
+            s = volume[:, :, z]
+            if s.max() < 1e-6:
+                continue
+            s_min, s_max = s.min(), s.max()
+            norm = (s - s_min) / (s_max - s_min + 1e-8)
+            arr  = resize_slice(norm.astype(np.float32))
+            tensor = np.stack([arr, arr, arr], axis=0)[np.newaxis, ...]
+
         non_empty += 1
+        outputs    = session.run(None, {input_name: tensor.astype(np.float32)})
+        pred_small = np.argmax(outputs[0][0], axis=0).astype(np.uint8)  # (INPUT_SIZE, INPUT_SIZE)
 
-        norm    = normalize_slice(s)
-        pil     = Image.fromarray((norm * 255).astype(np.uint8))
-        resized = pil.resize((INPUT_SIZE, INPUT_SIZE), Image.BILINEAR)
-        arr     = np.array(resized, dtype=np.float32) / 255.0
-        tensor  = np.stack([arr, arr, arr], axis=0)[np.newaxis, ...]
-
-        outputs    = session.run(None, {input_name: tensor})
-        pred_small = np.argmax(outputs[0][0], axis=0).astype(np.uint8)
-        pred_full  = np.array(Image.fromarray(pred_small).resize((W, H), Image.NEAREST))
+        # Redimensiona predicao de volta ao tamanho original da fatia
+        if pred_small.shape != (H, W):
+            pred_full = zoom(pred_small.astype(np.float32), (H / INPUT_SIZE, W / INPUT_SIZE), order=0).astype(np.uint8)
+        else:
+            pred_full = pred_small
         mask_3d[:, :, z] = pred_full
 
         if (pred_full > 0).any():
@@ -178,22 +219,25 @@ def extract_class_mesh(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input",  "-i", default="G:/www/neuroscan.com/data/brats/Task01_BrainTumour/imagesTr/BRATS_001.nii.gz")
-    parser.add_argument("--model",  "-m", default="G:/www/neuroscan.com/models/nnunet_brats.onnx")
-    parser.add_argument("--meta",         default="assets/models/brain_meta.json")
-    parser.add_argument("--outdir", "-o", default="assets/models")
+    parser.add_argument("--input",    "-i", default="G:/www/neuroscan.com/data/brats/Task01_BrainTumour/imagesTr/BRATS_001.nii.gz")
+    parser.add_argument("--model",    "-m", default="assets/models/onnx/nnunet_brats_4ch.onnx")
+    parser.add_argument("--meta",          default="assets/models/brain_meta.json")
+    parser.add_argument("--outdir",   "-o", default="assets/models")
+    parser.add_argument("--channels", "-c", type=int, default=4,
+                        help="Numero de canais do modelo (4=novo, 1=legado). Default: 4")
     args = parser.parse_args()
 
     input_path = Path(args.input)
     model_path = Path(args.model)
     meta_path  = Path(args.meta)
     out_dir    = Path(args.outdir)
+    n_channels = args.channels
 
     for p, name in [(input_path, "volume"), (model_path, "modelo ONNX"), (meta_path, "brain_meta.json")]:
         if not p.exists():
             print(f"ERRO: {name} nao encontrado: {p}", file=sys.stderr); sys.exit(1)
 
-    print("=== infer_tumor_3d (NeuroScan multi-classe, alta resolucao) ===")
+    print(f"=== infer_tumor_3d (NeuroScan multi-classe, {n_channels}-canal) ===")
     center, scale, upsample_factor = load_meta(meta_path)
     print()
 
@@ -203,9 +247,9 @@ def main() -> None:
     input_name = session.get_inputs()[0].name
     print()
 
-    flair   = load_flair_volume(input_path)
+    volume  = load_volume(input_path, n_channels)
     print()
-    mask_3d = run_inference_volume(flair, session, input_name)
+    mask_3d = run_inference_volume(volume, session, input_name, n_channels)
     print()
 
     print("Distribuicao de classes:")
