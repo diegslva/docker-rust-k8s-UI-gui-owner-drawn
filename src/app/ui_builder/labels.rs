@@ -670,26 +670,43 @@ impl App {
         elapsed_lbl.y = cy + 24.0;
         labels.push(elapsed_lbl);
 
-        // Volumes parciais — abaixo da barra de progresso (barra em h*0.84, 8px)
-        let vol_y = h * 0.84 + 20.0;
-        let vol_bright = (progress.anim_t * 3.0).sin().abs() * 0.12;
+        // Volumes parciais — linha horizontal abaixo da barra de progresso
+        let vol_y = h * 0.84 + 22.0;
+        let vol_bright = (progress.anim_t * 3.0).sin().abs() * 0.10;
         let vol_items = [
             ("ET", progress.et_volume_ml, ET_COLOR),
             ("SNFH", progress.snfh_volume_ml, SNFH_COLOR),
             ("NETC", progress.netc_volume_ml, NETC_COLOR),
         ];
-        for (i, (name, ml, color)) in vol_items.iter().enumerate() {
+        // Construir texto inline: "● ET 2.3 mL   ● SNFH 8.7 mL   ● NETC 1.5 mL"
+        let mut parts: Vec<(String, Color)> = Vec::new();
+        for (name, ml, color) in &vol_items {
             if *ml > 0.0 {
-                let text = format!("\u{25CF}  {}  {:.1} mL", name, ml);
-                // Brighten: adiciona vol_bright a cada canal RGB (clamped a 1.0)
                 let bright_col = Color::rgb(
                     ((color[0] + vol_bright).min(1.0) * 255.0) as u8,
                     ((color[1] + vol_bright).min(1.0) * 255.0) as u8,
                     ((color[2] + vol_bright).min(1.0) * 255.0) as u8,
                 );
-                let mut lbl = Label::new(fs, &text, 12.0, bright_col, 0.0, 0.0);
-                lbl.x = (w - 120.0) / 2.0;
-                lbl.y = vol_y + i as f32 * 22.0;
+                parts.push((format!("\u{25CF} {} {:.1} mL", name, ml), bright_col));
+            }
+        }
+        if !parts.is_empty() {
+            // Renderizar cada parte lado a lado com spacing
+            let spacing = 28.0_f32;
+            let total_w: f32 = parts
+                .iter()
+                .map(|(t, _)| {
+                    let lbl = Label::new(fs, t, 11.0, Color::rgb(255, 255, 255), 0.0, 0.0);
+                    lbl.measured_width()
+                })
+                .sum::<f32>()
+                + spacing * (parts.len() as f32 - 1.0);
+            let mut x = (w - total_w) / 2.0;
+            for (text, col) in &parts {
+                let mut lbl = Label::new(fs, text, 11.0, *col, 0.0, 0.0);
+                lbl.x = x;
+                lbl.y = vol_y;
+                x += lbl.measured_width() + spacing;
                 labels.push(lbl);
             }
         }
