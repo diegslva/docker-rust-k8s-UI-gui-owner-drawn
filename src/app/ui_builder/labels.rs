@@ -7,7 +7,7 @@ use crate::app::App;
 use crate::app::state::{ET_COLOR, NETC_COLOR, SNFH_COLOR};
 use crate::ui::{Color, Label};
 
-use super::{col_dim, col_header, col_section, col_value, rgb_f};
+use super::{col_dim, col_header, col_section, col_subtitle, col_value, rgb_f};
 
 impl App {
     pub(crate) fn build_splash_labels(&mut self, size: PhysicalSize<u32>) {
@@ -17,18 +17,11 @@ impl App {
         let cy = h / 2.0 + 28.0;
         let fs = gpu.font_system_mut();
 
-        let mut title = Label::new_bold(fs, "NeuroScan", 50.0, Color::rgb(222, 234, 248), 0.0, 0.0);
+        let mut title = Label::new_bold(fs, "NeuroScan", 50.0, col_header(), 0.0, 0.0);
         title.x = (w - title.measured_width()) / 2.0;
         title.y = cy - 122.0;
 
-        let mut sub = Label::new(
-            fs,
-            "Visualizador Médico 3D",
-            15.5,
-            Color::rgb(88, 128, 168),
-            0.0,
-            0.0,
-        );
+        let mut sub = Label::new(fs, "Visualizador Médico 3D", 15.5, col_subtitle(), 0.0, 0.0);
         sub.x = (w - sub.measured_width()) / 2.0;
         sub.y = title.y + title.line_height() + 5.0;
 
@@ -93,7 +86,7 @@ impl App {
                 scan.case_id, scan.dataset, scan.modalities
             )
         };
-        let mut sub = Label::new(fs, &sub_text, 12.0, Color::rgb(148, 163, 184), 0.0, 0.0);
+        let mut sub = Label::new(fs, &sub_text, 12.0, col_subtitle(), 0.0, 0.0);
         sub.x = (w - sub.measured_width()) / 2.0;
         sub.y = title.y + title.line_height() + 3.0;
 
@@ -491,7 +484,7 @@ impl App {
             fs,
             "Segmentação Cerebral Inteligente",
             15.0,
-            Color::rgb(100, 140, 190),
+            col_subtitle(),
             0.0,
             0.0,
         );
@@ -588,14 +581,7 @@ impl App {
         labels.push(title);
 
         // Subtitulo
-        let mut sub = Label::new(
-            fs,
-            "Processando volume MRI",
-            14.0,
-            Color::rgb(148, 163, 184),
-            0.0,
-            0.0,
-        );
+        let mut sub = Label::new(fs, "Processando volume MRI", 14.0, col_subtitle(), 0.0, 0.0);
         sub.x = (w - sub.measured_width()) / 2.0;
         sub.y = h * 0.15 + 48.0;
         labels.push(sub);
@@ -638,15 +624,14 @@ impl App {
         };
 
         let cy = h * 0.70;
-        let mut phase_lbl =
-            Label::new_bold(fs, &phase_text, 14.0, Color::rgb(200, 212, 232), 0.0, 0.0);
+        let mut phase_lbl = Label::new_bold(fs, &phase_text, 14.0, col_header(), 0.0, 0.0);
         phase_lbl.x = (w - phase_lbl.measured_width()) / 2.0;
         phase_lbl.y = cy;
         labels.push(phase_lbl);
 
         // Percentual grande acima da barra
         let pct_text = format!("{}%", pct);
-        let mut pct_lbl = Label::new_bold(fs, &pct_text, 22.0, Color::rgb(220, 232, 248), 0.0, 0.0);
+        let mut pct_lbl = Label::new_bold(fs, &pct_text, 22.0, Color::rgb(255, 255, 255), 0.0, 0.0);
         pct_lbl.x = (w - pct_lbl.measured_width()) / 2.0;
         pct_lbl.y = h * 0.78;
         labels.push(pct_lbl);

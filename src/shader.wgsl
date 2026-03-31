@@ -36,11 +36,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let center = vec2<f32>(0.5, 0.5);
     let dist = length(in.uv - center) * 1.6;
 
-    // Cor base: grafite escuro (#1e1e24)
-    let dark = vec3<f32>(0.118, 0.118, 0.141);
+    // Tom-sobre-tom azul: bordas azul-noite profundo
+    let dark = vec3<f32>(0.035, 0.055, 0.085);
 
-    // Cor do glow central: azul-teal suave (#1a3a4a)
-    let glow = vec3<f32>(0.102, 0.227, 0.290);
+    // Centro: azul-teal mais claro (glow sutil)
+    let glow = vec3<f32>(0.08, 0.15, 0.24);
 
     // Blend suave: glow no centro, grafite nas bordas
     let t = smoothstep(0.0, 1.0, dist);
