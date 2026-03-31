@@ -108,4 +108,6 @@ pub struct MeshEntry<'a> {
     pub sss_strength: f32,
     /// use_texture: > 0.5 = sample diffuse texture, <= 0.5 = use tint.
     pub use_texture: f32,
+    /// Indice do bind group de textura do cerebro (0=Map1, 1=Map2, 2=Map3). None = placeholder.
+    pub texture_index: Option<usize>,
 }

@@ -39,6 +39,8 @@ pub struct GpuState {
     pub(crate) texture_bind_group_layout: BindGroupLayout,
     /// Bind group da textura placeholder (1x1 branca, usado quando sem textura).
     pub(crate) placeholder_texture_bg: BindGroup,
+    /// Bind groups das 3 color maps do cerebro (indices 0=Map1, 1=Map2, 2=Map3).
+    pub(crate) brain_texture_bgs: Vec<BindGroup>,
     /// Primitivas de cena (callout lines, boxes, separadores)
     pub(crate) prim_vert_buf: Buffer,
     pub(crate) prim_idx_buf: Buffer,
@@ -193,6 +195,29 @@ impl GpuState {
             ],
         });
 
+        // Carregar 3 color maps do cerebro
+        let texture_paths = [
+            ("assets/models/textures/color_map_1.png", "color_map_1"),
+            ("assets/models/textures/color_map_2.png", "color_map_2"),
+            ("assets/models/textures/color_map_3.png", "color_map_3"),
+        ];
+        let brain_texture_bgs: Vec<BindGroup> = texture_paths
+            .iter()
+            .filter_map(|(path, label)| {
+                pipelines::load_texture_from_file(
+                    &device,
+                    &queue,
+                    &texture_bind_group_layout,
+                    path,
+                    label,
+                )
+            })
+            .collect();
+        info!(
+            count = brain_texture_bgs.len(),
+            "texturas do cerebro carregadas"
+        );
+
         let pipeline_3d_opaque = pipelines::build_pipeline_3d(
             &device,
             &config,
@@ -277,6 +302,7 @@ impl GpuState {
             camera_bind_group,
             texture_bind_group_layout,
             placeholder_texture_bg,
+            brain_texture_bgs,
             prim_vert_buf,
             prim_idx_buf,
             overlay_prim_vert_buf,

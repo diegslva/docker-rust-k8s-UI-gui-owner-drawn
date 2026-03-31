@@ -196,6 +196,7 @@ impl App {
                                 mesh: m,
                                 tint: *t,
                                 alpha: *a,
+                                texture_map_index: None,
                             }
                         })
                     })
@@ -295,13 +296,26 @@ impl App {
                             .filter_map(|(i, m)| {
                                 self.brain_view.effective_alpha(i, m.alpha).map(|a| {
                                     let is_brain = i >= crate::app::state::TUMOR_COUNT;
-                                    MeshEntry {
-                                        mesh: &m.mesh,
-                                        tint: m.tint,
-                                        alpha: a,
-                                        roughness: if is_brain { 0.7 } else { 0.3 },
-                                        sss_strength: if is_brain { 0.15 } else { 0.0 },
-                                        use_texture: 0.0,
+                                    {
+                                        // Textura ativa no modo opaco (F3) para brain meshes
+                                        let use_tex = if is_brain
+                                            && self.brain_view
+                                                == crate::app::state::BrainViewMode::Opaque
+                                            && m.texture_map_index.is_some()
+                                        {
+                                            1.0
+                                        } else {
+                                            0.0
+                                        };
+                                        MeshEntry {
+                                            mesh: &m.mesh,
+                                            tint: m.tint,
+                                            alpha: a,
+                                            roughness: if is_brain { 0.7 } else { 0.3 },
+                                            sss_strength: if is_brain { 0.15 } else { 0.0 },
+                                            use_texture: use_tex,
+                                            texture_index: m.texture_map_index,
+                                        }
                                     }
                                 })
                             })
@@ -502,13 +516,24 @@ impl App {
                 .filter_map(|(i, m)| {
                     self.brain_view.effective_alpha(i, m.alpha).map(|a| {
                         let is_brain = i >= crate::app::state::TUMOR_COUNT;
-                        MeshEntry {
-                            mesh: &m.mesh,
-                            tint: m.tint,
-                            alpha: a,
-                            roughness: if is_brain { 0.7 } else { 0.3 },
-                            sss_strength: if is_brain { 0.15 } else { 0.0 },
-                            use_texture: 0.0,
+                        {
+                            let use_tex = if is_brain
+                                && self.brain_view == crate::app::state::BrainViewMode::Opaque
+                                && m.texture_map_index.is_some()
+                            {
+                                1.0
+                            } else {
+                                0.0
+                            };
+                            MeshEntry {
+                                mesh: &m.mesh,
+                                tint: m.tint,
+                                alpha: a,
+                                roughness: if is_brain { 0.7 } else { 0.3 },
+                                sss_strength: if is_brain { 0.15 } else { 0.0 },
+                                use_texture: use_tex,
+                                texture_index: m.texture_map_index,
+                            }
                         }
                     })
                 })

@@ -221,7 +221,11 @@ impl GpuState {
                     continue;
                 }
                 pass.set_bind_group(0, &self.camera_bind_group, &[(i * UNIFORM_ALIGN) as u32]);
-                pass.set_bind_group(1, &self.placeholder_texture_bg, &[]);
+                let tex_bg = entry
+                    .texture_index
+                    .and_then(|idx| self.brain_texture_bgs.get(idx))
+                    .unwrap_or(&self.placeholder_texture_bg);
+                pass.set_bind_group(1, tex_bg, &[]);
                 pass.set_vertex_buffer(0, entry.mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(entry.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..entry.mesh.index_count, 0, 0..1);
@@ -234,7 +238,11 @@ impl GpuState {
                     continue;
                 }
                 pass.set_bind_group(0, &self.camera_bind_group, &[(i * UNIFORM_ALIGN) as u32]);
-                pass.set_bind_group(1, &self.placeholder_texture_bg, &[]);
+                let tex_bg = entry
+                    .texture_index
+                    .and_then(|idx| self.brain_texture_bgs.get(idx))
+                    .unwrap_or(&self.placeholder_texture_bg);
+                pass.set_bind_group(1, tex_bg, &[]);
                 pass.set_vertex_buffer(0, entry.mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(entry.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..entry.mesh.index_count, 0, 0..1);
