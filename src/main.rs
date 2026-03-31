@@ -1,7 +1,7 @@
 mod app;
 mod camera;
+mod embedded;
 mod mesh;
-mod pipeline;
 mod renderer;
 mod ui;
 

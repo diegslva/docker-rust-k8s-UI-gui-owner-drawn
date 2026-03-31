@@ -250,7 +250,18 @@ pub(crate) fn load_brain_meshes_bg(
             })
             .collect();
         for (path, tint, alpha) in BRAIN_DEFS {
-            if let Ok(m) = crate::mesh::Mesh::from_obj(&device, path) {
+            // Extrai filename do path (ex: "assets/models/premium/Ventricles.obj" -> "Ventricles.obj")
+            let filename = std::path::Path::new(path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or(path);
+            let mesh_result = if let Some(file) = crate::embedded::premium_obj_bytes(filename) {
+                crate::mesh::Mesh::from_obj_bytes(&device, &file.data)
+            } else {
+                // Fallback: disco (desenvolvimento)
+                crate::mesh::Mesh::from_obj(&device, path)
+            };
+            if let Ok(m) = mesh_result {
                 all.push(LoadedMesh {
                     mesh: m,
                     tint: *tint,
