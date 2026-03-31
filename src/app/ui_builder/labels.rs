@@ -32,7 +32,13 @@ impl App {
         sub.x = (w - sub.measured_width()) / 2.0;
         sub.y = title.y + title.line_height() + 5.0;
 
-        self.splash_labels = vec![title, sub];
+        // Versao discreta no canto inferior
+        let ver_text = format!("v{}", env!("CARGO_PKG_VERSION"));
+        let mut ver = Label::new(fs, &ver_text, 9.0, Color::rgb(60, 75, 95), 0.0, 0.0);
+        ver.x = (w - ver.measured_width()) / 2.0;
+        ver.y = h - 28.0;
+
+        self.splash_labels = vec![title, sub, ver];
     }
 
     pub(crate) fn build_labels(&mut self, size: PhysicalSize<u32>) {
@@ -493,24 +499,40 @@ impl App {
         sub.y = h * 0.12 + 54.0;
         labels.push(sub);
 
-        // Capacidades (abaixo da animação cerebral, que fica no centro)
-        let features = [
-            "Inferência nnUNet 2D slice-a-slice",
-            "4 canais MRI: FLAIR  ·  T1w  ·  T1ce  ·  T2w",
-            "Segmentação tumoral: ET  ·  SNFH  ·  NETC",
-            "Visualização 3D interativa com dados reais",
+        // Capacidades (abaixo da animacao cerebral)
+        let features: &[(&str, [f32; 3])] = &[
+            ("Inferencia nnUNet 2D slice-a-slice", [0.65, 0.75, 0.88]),
+            (
+                "4 canais MRI: FLAIR  ·  T1w  ·  T1ce  ·  T2w",
+                [0.65, 0.75, 0.88],
+            ),
+            (
+                "Segmentacao tumoral: ET  ·  SNFH  ·  NETC",
+                [0.65, 0.75, 0.88],
+            ),
+            (
+                "Visualizacao 3D interativa com dados reais",
+                [0.65, 0.75, 0.88],
+            ),
         ];
         let feat_y = h * 0.62;
-        let feat_col = col_value();
-        for (i, text) in features.iter().enumerate() {
+        for (i, (text, col)) in features.iter().enumerate() {
+            let feat_col = Color::rgb(
+                (col[0] * 255.0) as u8,
+                (col[1] * 255.0) as u8,
+                (col[2] * 255.0) as u8,
+            );
             let mut lbl = Label::new(fs, text, 11.5, feat_col, 0.0, 0.0);
             lbl.x = (w - lbl.measured_width()) / 2.0;
-            lbl.y = feat_y + i as f32 * 20.0;
+            lbl.y = feat_y + i as f32 * 22.0;
             labels.push(lbl);
         }
 
-        // Call-to-action (breathing alpha para atrair atenção)
-        let cta_y = feat_y + features.len() as f32 * 20.0 + 32.0;
+        // Separador sutil abaixo das features
+        // (renderizado via primitivas, nao label)
+
+        // Call-to-action (breathing alpha)
+        let cta_y = feat_y + features.len() as f32 * 22.0 + 36.0;
         if let Some(err) = &python_err {
             // Erro de ambiente: mostra mensagem de aviso em âmbar
             let mut err_lbl = Label::new_bold(fs, err, 11.5, Color::rgb(240, 180, 60), 0.0, 0.0);
@@ -580,14 +602,31 @@ impl App {
 
         // Fase atual
         use crate::app::infer::InferPhase;
+        // Fracao de progresso (usada para percentual e barra)
+        let frac = if progress.total_slices > 0 {
+            match &progress.phase {
+                InferPhase::PythonSetup => 0.01_f32,
+                InferPhase::Preprocessing => 0.02,
+                InferPhase::Slicing => {
+                    0.05 + 0.80 * (progress.current_slice as f32 / progress.total_slices as f32)
+                }
+                InferPhase::MarchingCubes => 0.90,
+                InferPhase::Done => 1.0,
+                InferPhase::Error(_) => 0.0,
+            }
+        } else {
+            0.0
+        };
+        let pct = (frac * 100.0).round() as u32;
+
         let phase_text = match &progress.phase {
             InferPhase::PythonSetup => "Configurando ambiente Python...".to_string(),
             InferPhase::Preprocessing => "Carregando e normalizando volume...".to_string(),
             InferPhase::Slicing => {
                 if progress.total_slices > 0 {
                     format!(
-                        "Inferindo fatia {} / {}",
-                        progress.current_slice, progress.total_slices
+                        "Inferindo fatia {} de {} ({}%)",
+                        progress.current_slice, progress.total_slices, pct
                     )
                 } else {
                     "Iniciando inferencia...".to_string()
@@ -598,16 +637,35 @@ impl App {
             InferPhase::Error(e) => format!("Erro: {}", e),
         };
 
-        let cy = h * 0.72;
+        let cy = h * 0.70;
         let mut phase_lbl =
             Label::new_bold(fs, &phase_text, 14.0, Color::rgb(200, 212, 232), 0.0, 0.0);
         phase_lbl.x = (w - phase_lbl.measured_width()) / 2.0;
         phase_lbl.y = cy;
         labels.push(phase_lbl);
 
-        // Tempo decorrido
-        let elapsed = format!("{:.0}s", progress.elapsed_secs);
-        let mut elapsed_lbl = Label::new(fs, &elapsed, 11.0, col_dim(), 0.0, 0.0);
+        // Percentual grande acima da barra
+        let pct_text = format!("{}%", pct);
+        let mut pct_lbl = Label::new_bold(fs, &pct_text, 22.0, Color::rgb(220, 232, 248), 0.0, 0.0);
+        pct_lbl.x = (w - pct_lbl.measured_width()) / 2.0;
+        pct_lbl.y = h * 0.78;
+        labels.push(pct_lbl);
+
+        // Tempo decorrido + ETA estimado
+        let elapsed_secs = progress.elapsed_secs;
+        let eta_text = if progress.current_slice > 5 && progress.total_slices > 0 {
+            let remaining = progress.total_slices.saturating_sub(progress.current_slice);
+            let secs_per_slice = elapsed_secs / progress.current_slice as f32;
+            let eta = (remaining as f32 * secs_per_slice).round() as u32;
+            if eta > 0 {
+                format!("{:.0}s  --  ~{}s restantes", elapsed_secs, eta)
+            } else {
+                format!("{:.0}s", elapsed_secs)
+            }
+        } else {
+            format!("{:.0}s", elapsed_secs)
+        };
+        let mut elapsed_lbl = Label::new(fs, &eta_text, 11.0, col_dim(), 0.0, 0.0);
         elapsed_lbl.x = (w - elapsed_lbl.measured_width()) / 2.0;
         elapsed_lbl.y = cy + 24.0;
         labels.push(elapsed_lbl);
