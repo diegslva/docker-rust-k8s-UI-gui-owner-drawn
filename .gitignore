@@ -5,7 +5,7 @@
 # Meshes 3D gerados localmente via scripts/ml/extract_brain_mesh.py e scripts/ml/infer_tumor_3d.py
 # Nao versionar — sao grandes (>50MB) e reproduziveis a partir dos NIfTI BraTS
 assets/models/*.obj
-assets/models/brain_meta.json
+# brain_meta.json versionado — embarcado no binario via include_bytes!
 
 # Diretorio de saida da inferencia — gerado em runtime, nao versionado
 assets/models/cases/BRATS_CUSTOM/
