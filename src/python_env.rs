@@ -33,6 +33,49 @@ pub(crate) struct PythonEnv {
     pub python_bin: PathBuf,
     /// Fonte do Python (para logging).
     pub source: PythonSource,
+    /// Versao do Python detectado (major, minor).
+    pub version: (u32, u32),
+}
+
+impl PythonEnv {
+    /// Log de resumo visivel — chamado apos setup bem-sucedido.
+    ///
+    /// Mostra: versao Python, fonte (sistema/venv/standalone), path, e providers ONNX.
+    pub fn log_summary(&self) {
+        let providers = self.detect_ort_providers();
+        let msg = format!(
+            "[NeuroScan] Python {}.{} ({}) -- {}",
+            self.version.0,
+            self.version.1,
+            self.source,
+            self.python_bin.display(),
+        );
+        eprintln!("{msg}");
+        info!("{msg}");
+
+        let prov_msg = format!("[NeuroScan] ONNX Runtime providers: {providers}");
+        eprintln!("{prov_msg}");
+        info!("{prov_msg}");
+    }
+
+    /// Detecta quais execution providers o ONNX Runtime suporta neste Python.
+    fn detect_ort_providers(&self) -> String {
+        let output = Command::new(self.python_bin.as_os_str())
+            .args([
+                "-c",
+                "import onnxruntime as ort; print(','.join(ort.get_available_providers()))",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                String::from_utf8_lossy(&out.stdout).trim().to_string()
+            }
+            _ => "nao detectado".to_string(),
+        }
+    }
 }
 
 /// Origem do Python detectado.
@@ -75,21 +118,30 @@ pub(crate) fn ensure_python_env(progress: Option<SetupProgressFn>) -> Result<Pyt
     // 1. Venv local ja configurado?
     let venv_python = venv_python_path(&base_dir);
     if venv_python.exists() && check_deps(&venv_python) {
+        let version = get_python_version(&venv_python.to_string_lossy()).unwrap_or((3, 10));
         info!(python = %venv_python.display(), "venv local com deps encontrado");
-        return Ok(PythonEnv {
+        let env = PythonEnv {
             python_bin: venv_python,
             source: PythonSource::LocalVenv,
-        });
+            version,
+        };
+        env.log_summary();
+        return Ok(env);
     }
 
     // 2. Python do sistema com deps?
     if let Some(system_python) = find_system_python() {
+        let version = get_python_version(&system_python).unwrap_or((3, 10));
+
         if check_deps_str(&system_python) {
             info!(python = %system_python, "Python do sistema com deps encontrado");
-            return Ok(PythonEnv {
+            let env = PythonEnv {
                 python_bin: PathBuf::from(&system_python),
                 source: PythonSource::System,
-            });
+                version,
+            };
+            env.log_summary();
+            return Ok(env);
         }
 
         // 3. Python do sistema sem deps — criar venv e instalar
@@ -101,15 +153,19 @@ pub(crate) fn ensure_python_env(progress: Option<SetupProgressFn>) -> Result<Pyt
 
         if check_deps(&venv_python) {
             info!(python = %venv_python.display(), "venv local criado com sucesso");
-            return Ok(PythonEnv {
+            let env = PythonEnv {
                 python_bin: venv_python,
                 source: PythonSource::LocalVenv,
-            });
+                version,
+            };
+            env.log_summary();
+            return Ok(env);
         }
         warn!("venv criado mas deps nao verificadas — tentando standalone");
     }
 
     // 4. Sem Python adequado — baixar standalone
+    eprintln!("[NeuroScan] Python nao encontrado no sistema — baixando standalone...");
     report("Baixando Python portavel (~40MB)...");
     let standalone_python = download_standalone_python(&base_dir)?;
 
@@ -121,11 +177,28 @@ pub(crate) fn ensure_python_env(progress: Option<SetupProgressFn>) -> Result<Pyt
     install_deps(&venv_python)?;
 
     if check_deps(&venv_python) {
+        let version = get_python_version(&venv_python.to_string_lossy()).unwrap_or((
+            PBS_PYTHON_VERSION
+                .split('.')
+                .next()
+                .unwrap_or("3")
+                .parse()
+                .unwrap_or(3),
+            PBS_PYTHON_VERSION
+                .split('.')
+                .nth(1)
+                .unwrap_or("10")
+                .parse()
+                .unwrap_or(10),
+        ));
         info!(python = %venv_python.display(), "Python standalone + venv pronto");
-        return Ok(PythonEnv {
+        let env = PythonEnv {
             python_bin: venv_python,
             source: PythonSource::Standalone,
-        });
+            version,
+        };
+        env.log_summary();
+        return Ok(env);
     }
 
     Err("Falha ao configurar ambiente Python apos download standalone".to_string())
