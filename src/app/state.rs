@@ -161,8 +161,8 @@ impl BrainViewMode {
         }
         match self {
             BrainViewMode::Transparent => Some(base_alpha),
-            BrainViewMode::TumorsOnly => None,   // oculto
-            BrainViewMode::Opaque => Some(0.95), // quase opaco, leve translucidez
+            BrainViewMode::TumorsOnly => None,  // oculto
+            BrainViewMode::Opaque => Some(1.0), // totalmente opaco (depth write ativo, sem buracos)
         }
     }
 }
