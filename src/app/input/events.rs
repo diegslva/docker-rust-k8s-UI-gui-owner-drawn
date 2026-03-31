@@ -51,6 +51,17 @@ impl App {
                             }
                             _ => {}
                         },
+                        Key::Named(NamedKey::F11) => {
+                            if let Some(w) = &self.window {
+                                let is_fullscreen = w.fullscreen().is_some();
+                                w.set_fullscreen(if is_fullscreen {
+                                    None
+                                } else {
+                                    Some(winit::window::Fullscreen::Borderless(None))
+                                });
+                                tracing::info!(fullscreen = !is_fullscreen, "toggle fullscreen");
+                            }
+                        }
                         Key::Named(NamedKey::ArrowRight) => self.navigate_case(1),
                         Key::Named(NamedKey::ArrowLeft) => self.navigate_case(-1),
                         Key::Named(NamedKey::Escape) => {
