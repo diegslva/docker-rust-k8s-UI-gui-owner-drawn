@@ -51,6 +51,23 @@ impl App {
                             }
                             _ => {}
                         },
+                        Key::Named(NamedKey::F2) => {
+                            use crate::app::state::BrainViewMode;
+                            self.brain_view = match self.brain_view {
+                                BrainViewMode::Transparent => BrainViewMode::TumorsOnly,
+                                BrainViewMode::TumorsOnly => BrainViewMode::Transparent,
+                                BrainViewMode::Opaque => BrainViewMode::TumorsOnly,
+                            };
+                            tracing::info!(mode = ?self.brain_view, "F2: toggle cerebro");
+                        }
+                        Key::Named(NamedKey::F3) => {
+                            use crate::app::state::BrainViewMode;
+                            self.brain_view = match self.brain_view {
+                                BrainViewMode::Opaque => BrainViewMode::Transparent,
+                                _ => BrainViewMode::Opaque,
+                            };
+                            tracing::info!(mode = ?self.brain_view, "F3: modo cerebro realista");
+                        }
                         Key::Named(NamedKey::F11) => {
                             if let Some(w) = &self.window {
                                 let is_fullscreen = w.fullscreen().is_some();

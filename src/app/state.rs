@@ -110,10 +110,40 @@ pub(crate) const BRAIN_DEFS: &[(&str, [f32; 3], f32)] = &[
 
 pub(crate) const TUMOR_COUNT: usize = 3;
 
+/// Modo de visualizacao do cerebro — alternado via F2/F3.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum BrainViewMode {
+    /// Cerebro transparente + tumores visiveis (default, analise clinica).
+    Transparent,
+    /// Sem cerebro, apenas tumores (analise cirurgica).
+    TumorsOnly,
+    /// Cerebro opaco/realista (apresentacao anatomica).
+    Opaque,
+}
+
 pub(crate) struct LoadedMesh {
     pub(crate) mesh: Mesh,
     pub(crate) tint: [f32; 3],
     pub(crate) alpha: f32,
+}
+
+impl BrainViewMode {
+    /// Retorna o alpha efetivo de um mesh dado o modo e sua posicao no array.
+    ///
+    /// Indices 0..TUMOR_COUNT sao tumores (sempre visiveis).
+    /// Indices TUMOR_COUNT.. sao cerebro (controlados pelo modo).
+    pub(crate) fn effective_alpha(self, index: usize, base_alpha: f32) -> Option<f32> {
+        let is_brain = index >= TUMOR_COUNT;
+        if !is_brain {
+            // Tumores: sempre visiveis, alpha original
+            return Some(base_alpha);
+        }
+        match self {
+            BrainViewMode::Transparent => Some(base_alpha),
+            BrainViewMode::TumorsOnly => None,   // oculto
+            BrainViewMode::Opaque => Some(0.95), // quase opaco, leve translucidez
+        }
+    }
 }
 
 pub(crate) struct App {
@@ -129,6 +159,8 @@ pub(crate) struct App {
     pub(crate) labels_menu_bar: Vec<Label>,
     pub(crate) labels_menu: Vec<Label>,
     pub(crate) show_panel: bool,
+    /// Modo de visualizacao do cerebro (F2/F3).
+    pub(crate) brain_view: BrainViewMode,
     // Menu bar
     pub(crate) menu_open: i32,
     pub(crate) menu_hover_top: i32,
@@ -186,6 +218,7 @@ impl App {
             labels_menu_bar: Vec::new(),
             labels_menu: Vec::new(),
             show_panel: false,
+            brain_view: BrainViewMode::Transparent,
             menu_open: -1,
             menu_hover_top: -1,
             menu_hover_item: -1,

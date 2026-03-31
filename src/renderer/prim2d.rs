@@ -102,4 +102,8 @@ pub struct MeshEntry<'a> {
     pub tint: [f32; 3],
     /// alpha: 1.0 = opaco, <1.0 = semi-transparente (alpha blend).
     pub alpha: f32,
+    /// roughness: 0.0 = espelho, 1.0 = fosco. Tumores ~0.3, cerebro ~0.7.
+    pub roughness: f32,
+    /// sss_strength: intensidade de subsurface scattering (0.0 = off).
+    pub sss_strength: f32,
 }
