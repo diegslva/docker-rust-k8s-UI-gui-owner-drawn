@@ -670,8 +670,8 @@ impl App {
         elapsed_lbl.y = cy + 24.0;
         labels.push(elapsed_lbl);
 
-        // Volumes parciais com pulse sutil (cor oscila suavemente)
-        let vol_y = h * 0.80;
+        // Volumes parciais — abaixo da barra de progresso (barra em h*0.84, 8px)
+        let vol_y = h * 0.84 + 20.0;
         let vol_bright = (progress.anim_t * 3.0).sin().abs() * 0.12;
         let vol_items = [
             ("ET", progress.et_volume_ml, ET_COLOR),
