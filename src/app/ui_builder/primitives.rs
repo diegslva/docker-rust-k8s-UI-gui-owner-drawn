@@ -4,6 +4,8 @@ use crate::app::App;
 use crate::app::infer::InferPhase;
 use crate::renderer::Prim2DBatch;
 
+use super::{ACCENT, ACCENT_GLOW, BG_BORDER, BG_DEEP, BG_SURFACE};
+
 use super::super::projection::project_to_screen;
 use super::super::state::{ET_COLOR, NETC_COLOR, PULSE_FREQ, SNFH_COLOR};
 
@@ -17,7 +19,7 @@ impl App {
         let orbit = self.spinner_angle;
 
         // Fundo
-        b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, 1.0], w, h);
+        b.rect(0.0, 0.0, w, h, BG_DEEP, w, h);
 
         // Linha de varredura horizontal — estilo scanner MRI
         let scan_y = ((t * 0.36).fract() * h).clamp(0.0, h - 2.0);
@@ -138,7 +140,7 @@ impl App {
         let y_ct = h * 0.14;
         let box_w = (w * 0.175).clamp(190.0, 240.0);
         let box_h = 92.0_f32;
-        let bg = [0.04, 0.06, 0.11, 0.92_f32];
+        let bg = BG_SURFACE;
         let inner_ov = [0.20, 0.26, 0.40, 0.09_f32];
         let dot_r = 3.5 + 1.5 * (pulse_t * std::f32::consts::TAU * PULSE_FREQ).sin().abs();
 
@@ -267,7 +269,15 @@ impl App {
 
         // Overlay de inferência real — spinner grande centralizado
         if infer_active {
-            b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, 0.72], w, h);
+            b.rect(
+                0.0,
+                0.0,
+                w,
+                h,
+                [BG_DEEP[0], BG_DEEP[1], BG_DEEP[2], 0.72],
+                w,
+                h,
+            );
             let cx = w / 2.0;
             let cy = h / 2.0;
             let r = 52.0_f32;
@@ -321,7 +331,15 @@ impl App {
         // Overlay de transição — dissolve sinusoidal suave
         if transition > 0.0 {
             let alpha = (transition * std::f32::consts::PI).sin() * 0.92;
-            b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, alpha], w, h);
+            b.rect(
+                0.0,
+                0.0,
+                w,
+                h,
+                [BG_DEEP[0], BG_DEEP[1], BG_DEEP[2], alpha],
+                w,
+                h,
+            );
 
             let spinner_alpha = ((transition * std::f32::consts::PI).sin() * 1.6).min(1.0);
             if spinner_alpha > 0.05 {
@@ -400,7 +418,7 @@ impl App {
         let cy = h * 0.40;
 
         // Fundo escuro
-        b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, 1.0], w, h);
+        b.rect(0.0, 0.0, w, h, BG_DEEP, w, h);
 
         // Scan-lines sutis (efeito MRI ambiente)
         let scan_speeds = [0.14_f32, 0.22, 0.09];
@@ -504,7 +522,7 @@ impl App {
 
         let Some(progress) = &self.infer_progress else {
             // Sem progresso disponível: tela mínima de espera
-            b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, 1.0], w, h);
+            b.rect(0.0, 0.0, w, h, BG_DEEP, w, h);
             return b;
         };
 
@@ -520,7 +538,7 @@ impl App {
         b.rect(line_x, h * 0.15 + 68.0, line_w, 1.0, line_col, w, h);
 
         // ── Fundo escuro ────────────────────────────────────────────
-        b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, 1.0], w, h);
+        b.rect(0.0, 0.0, w, h, BG_DEEP, w, h);
 
         // ── Scan-lines animadas (três velocidades diferentes) ───────
         let scan_speeds = [0.18_f32, 0.27, 0.11];
@@ -622,7 +640,7 @@ impl App {
                 sweep_y - 0.5,
                 w * 0.80,
                 1.5,
-                [0.20, 0.65, 0.95, 0.30],
+                [ACCENT[0], ACCENT[1], ACCENT[2], 0.30],
                 w,
                 h,
             );
@@ -635,16 +653,32 @@ impl App {
         let bar_w = w * 0.76;
 
         // Fundo da barra (mais sutil)
-        b.rect(bar_x, bar_y, bar_w, bar_h, [0.06, 0.10, 0.20, 0.70], w, h);
+        b.rect(
+            bar_x,
+            bar_y,
+            bar_w,
+            bar_h,
+            [BG_SURFACE[0], BG_SURFACE[1], BG_SURFACE[2], 0.70],
+            w,
+            h,
+        );
         // Borda superior fina
-        b.rect(bar_x, bar_y, bar_w, 1.0, [0.15, 0.25, 0.40, 0.30], w, h);
+        b.rect(
+            bar_x,
+            bar_y,
+            bar_w,
+            1.0,
+            [BG_BORDER[0], BG_BORDER[1], BG_BORDER[2], 0.30],
+            w,
+            h,
+        );
         // Borda inferior fina
         b.rect(
             bar_x,
             bar_y + bar_h - 1.0,
             bar_w,
             1.0,
-            [0.15, 0.25, 0.40, 0.20],
+            [BG_BORDER[0], BG_BORDER[1], BG_BORDER[2], 0.20],
             w,
             h,
         );
@@ -668,17 +702,9 @@ impl App {
         if frac > 0.0 {
             let fill_w = (bar_w * frac).max(bar_h);
             // Glow suave atras do fill
-            b.rect(
-                bar_x,
-                bar_y - 2.0,
-                fill_w,
-                bar_h + 4.0,
-                [0.20, 0.65, 0.95, 0.10],
-                w,
-                h,
-            );
+            b.rect(bar_x, bar_y - 2.0, fill_w, bar_h + 4.0, ACCENT_GLOW, w, h);
             // Fill principal
-            b.rect(bar_x, bar_y, fill_w, bar_h, [0.20, 0.65, 0.95, 0.88], w, h);
+            b.rect(bar_x, bar_y, fill_w, bar_h, ACCENT, w, h);
 
             // Glow pulsante na ponta da barra (edge pulse)
             let pulse = (progress.anim_t * 3.5).sin().abs();
@@ -702,7 +728,15 @@ impl App {
     pub(crate) fn build_menu_overlay(&self, w: f32, h: f32) -> Prim2DBatch {
         let mut b = Prim2DBatch::new();
 
-        b.rect(0.0, 0.0, w, MENU_BAR_H, [0.04, 0.06, 0.12, 0.97], w, h);
+        b.rect(
+            0.0,
+            0.0,
+            w,
+            MENU_BAR_H,
+            [BG_SURFACE[0], BG_SURFACE[1], BG_SURFACE[2], 0.97],
+            w,
+            h,
+        );
         b.rect(
             0.0,
             MENU_BAR_H - 1.0,
