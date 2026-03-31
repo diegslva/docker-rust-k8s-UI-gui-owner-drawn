@@ -10,38 +10,66 @@ const INPUT_SIZE: usize = 256;
 
 /// Cria uma sessao ONNX Runtime a partir de um arquivo .onnx.
 ///
-/// Tenta usar GPU (TensorRT > CUDA) e faz fallback para CPU automaticamente.
+/// Seleciona o melhor execution provider por plataforma:
+/// - Windows: DirectML (GPU via DirectX 12, sem CUDA Toolkit)
+/// - Linux/Jetson: TensorRT > CUDA > CPU fallback
 pub(crate) fn create_session(model_path: &str) -> anyhow::Result<ort::session::Session> {
-    use ort::execution_providers::{CUDAExecutionProvider, TensorRTExecutionProvider};
-    use tracing::warn;
-
     let builder =
         ort::session::Session::builder().context("falha ao criar builder de sessao ONNX")?;
 
-    let mut builder = match builder.with_execution_providers([
-        TensorRTExecutionProvider::default().build(),
-        CUDAExecutionProvider::default().build(),
-    ]) {
-        Ok(b) => b,
-        Err(e) => {
-            warn!(
-                "falha ao registrar GPU execution providers, usando CPU: {}",
-                e.message()
-            );
-            e.recover()
-        }
-    };
+    let mut builder = register_gpu_providers(builder);
 
     let session = builder
         .commit_from_file(model_path)
         .with_context(|| format!("falha ao carregar modelo ONNX: {}", model_path))?;
 
-    info!(
-        "sessao ONNX criada a partir de {} (TensorRT > CUDA > CPU fallback)",
-        model_path
-    );
+    info!("sessao ONNX criada a partir de {}", model_path);
 
     Ok(session)
+}
+
+/// Registra execution providers GPU por plataforma.
+fn register_gpu_providers(
+    builder: ort::session::builder::SessionBuilder,
+) -> ort::session::builder::SessionBuilder {
+    use tracing::warn;
+
+    #[cfg(target_os = "windows")]
+    {
+        use ort::execution_providers::DirectMLExecutionProvider;
+        eprintln!("[NeuroScan] Registrando DirectML execution provider (Windows GPU)...");
+        info!("registrando DirectML execution provider (Windows GPU)");
+        match builder.with_execution_providers([DirectMLExecutionProvider::default().build()]) {
+            Ok(b) => {
+                eprintln!("[NeuroScan] DirectML ATIVO — inferencia via GPU");
+                return b;
+            }
+            Err(e) => {
+                eprintln!("[NeuroScan] DirectML FALHOU: {} — usando CPU", e.message());
+                warn!("DirectML nao disponivel, usando CPU: {}", e.message());
+                return e.recover();
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        use ort::execution_providers::{CUDAExecutionProvider, TensorRTExecutionProvider};
+        info!("registrando TensorRT/CUDA execution providers (Linux GPU)");
+        match builder.with_execution_providers([
+            TensorRTExecutionProvider::default().build(),
+            CUDAExecutionProvider::default().build(),
+        ]) {
+            Ok(b) => return b,
+            Err(e) => {
+                warn!(
+                    "GPU execution providers nao disponiveis, usando CPU: {}",
+                    e.message()
+                );
+                return e.recover();
+            }
+        }
+    }
 }
 
 /// Executa inferencia slice-a-slice em um volume 4-canais.
