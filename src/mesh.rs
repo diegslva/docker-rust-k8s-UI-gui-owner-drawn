@@ -43,11 +43,33 @@ impl Mesh {
         )
         .context("falha ao carregar OBJ")?;
 
+        Self::from_models(device, &models)
+    }
+
+    /// Carrega um OBJ a partir de bytes em memoria (rust-embed) e faz upload para a GPU.
+    pub fn from_obj_bytes(device: &Device, data: &[u8]) -> Result<Self> {
+        let mut reader = std::io::BufReader::new(std::io::Cursor::new(data));
+        let (models, _) = tobj::load_obj_buf(
+            &mut reader,
+            &tobj::LoadOptions {
+                triangulate: true,
+                single_index: true,
+                ..Default::default()
+            },
+            |_| Ok(Default::default()),
+        )
+        .context("falha ao carregar OBJ de bytes")?;
+
+        Self::from_models(device, &models)
+    }
+
+    /// Constroi vertices e indices a partir de modelos tobj.
+    fn from_models(device: &Device, models: &[tobj::Model]) -> Result<Self> {
         let mut vertices: Vec<Vertex3D> = Vec::new();
         let mut indices: Vec<u32> = Vec::new();
         let mut index_offset: u32 = 0;
 
-        for model in &models {
+        for model in models {
             let mesh = &model.mesh;
             let vertex_count = mesh.positions.len() / 3;
 
