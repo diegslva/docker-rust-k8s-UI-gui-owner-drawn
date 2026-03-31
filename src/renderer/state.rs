@@ -34,6 +34,11 @@ pub struct GpuState {
     pub(crate) camera_bind_group_layout: BindGroupLayout,
     pub(crate) camera_buffer: Buffer,
     pub(crate) camera_bind_group: BindGroup,
+    // Texturas
+    #[allow(dead_code)]
+    pub(crate) texture_bind_group_layout: BindGroupLayout,
+    /// Bind group da textura placeholder (1x1 branca, usado quando sem textura).
+    pub(crate) placeholder_texture_bg: BindGroup,
     /// Primitivas de cena (callout lines, boxes, separadores)
     pub(crate) prim_vert_buf: Buffer,
     pub(crate) prim_idx_buf: Buffer,
@@ -169,10 +174,39 @@ impl GpuState {
         let depth_texture =
             pipelines::create_depth_texture(&device, size.width.max(1), size.height.max(1));
 
-        let pipeline_3d_opaque =
-            pipelines::build_pipeline_3d(&device, &config, &camera_bind_group_layout, false);
-        let pipeline_3d_alpha =
-            pipelines::build_pipeline_3d(&device, &config, &camera_bind_group_layout, true);
+        // Texture bind group layout + placeholder
+        let texture_bind_group_layout = pipelines::build_texture_bind_group_layout(&device);
+        let (_placeholder_tex, placeholder_view, placeholder_sampler) =
+            pipelines::create_placeholder_texture(&device, &queue);
+        let placeholder_texture_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("placeholder_texture_bg"),
+            layout: &texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&placeholder_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&placeholder_sampler),
+                },
+            ],
+        });
+
+        let pipeline_3d_opaque = pipelines::build_pipeline_3d(
+            &device,
+            &config,
+            &camera_bind_group_layout,
+            &texture_bind_group_layout,
+            false,
+        );
+        let pipeline_3d_alpha = pipelines::build_pipeline_3d(
+            &device,
+            &config,
+            &camera_bind_group_layout,
+            &texture_bind_group_layout,
+            true,
+        );
         let pipeline_2d_prim = pipelines::build_pipeline_2d_prim(&device, &config);
 
         // Buffers dinamicos para primitivas de overlay (menu bar + dropdown)
@@ -241,6 +275,8 @@ impl GpuState {
             camera_bind_group_layout,
             camera_buffer,
             camera_bind_group,
+            texture_bind_group_layout,
+            placeholder_texture_bg,
             prim_vert_buf,
             prim_idx_buf,
             overlay_prim_vert_buf,

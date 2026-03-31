@@ -106,4 +106,6 @@ pub struct MeshEntry<'a> {
     pub roughness: f32,
     /// sss_strength: intensidade de subsurface scattering (0.0 = off).
     pub sss_strength: f32,
+    /// use_texture: > 0.5 = sample diffuse texture, <= 0.5 = use tint.
+    pub use_texture: f32,
 }

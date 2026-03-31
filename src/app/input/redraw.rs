@@ -301,6 +301,7 @@ impl App {
                                         alpha: a,
                                         roughness: if is_brain { 0.7 } else { 0.3 },
                                         sss_strength: if is_brain { 0.15 } else { 0.0 },
+                                        use_texture: 0.0,
                                     }
                                 })
                             })
@@ -507,6 +508,7 @@ impl App {
                             alpha: a,
                             roughness: if is_brain { 0.7 } else { 0.3 },
                             sss_strength: if is_brain { 0.15 } else { 0.0 },
+                            use_texture: 0.0,
                         }
                     })
                 })

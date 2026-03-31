@@ -3,10 +3,9 @@ use glam::{Mat4, Vec3};
 
 /// Uniform buffer enviado ao shader 3D a cada frame.
 /// Layout identico ao struct CameraUniform em shader3d.wgsl.
-/// Tamanho: 192 bytes (multiplo de 16, conforme requerimento WGSL std140).
+/// Tamanho: 176 bytes (multiplo de 16, conforme requerimento WGSL).
 ///
-/// WGSL vec3 tem alignment 16 — o _pad vec3 no shader puxa o tamanho para 192.
-/// O Rust struct usa _pad [f32; 7] para bater com o layout do shader.
+/// Campos de material (roughness, sss, use_texture) sao sobrescritos per-mesh.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct CameraUniform {
@@ -17,7 +16,8 @@ pub struct CameraUniform {
     pub tint: [f32; 3],              // 12 bytes  (offset 144)
     pub alpha: f32,                  //  4 bytes  (offset 156)
     pub sss_strength: f32,           //  4 bytes  (offset 160)
-    pub _pad: [f32; 7],              // 28 bytes  (total: 192)
+    pub use_texture: f32,            //  4 bytes  (offset 164, >0.5=textured)
+    pub _pad: [f32; 2],              //  8 bytes  (total: 176)
 }
 
 pub struct OrbitalCamera {
@@ -65,7 +65,8 @@ impl OrbitalCamera {
             tint: [0.0; 3],    // sobrescrito pelo renderer
             alpha: 1.0,        // sobrescrito pelo renderer
             sss_strength: 0.0, // sobrescrito pelo renderer
-            _pad: [0.0; 7],
+            use_texture: 0.0,  // sobrescrito pelo renderer
+            _pad: [0.0; 2],
         }
     }
 }
