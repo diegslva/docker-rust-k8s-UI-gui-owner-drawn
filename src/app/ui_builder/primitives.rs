@@ -98,7 +98,7 @@ impl App {
             );
         }
 
-        // Ponto brilhante na cabeça do arco
+        // Ponto brilhante na cabeca do arco
         let hx = cx + orbit_r * orbit.cos();
         let hy = cy + orbit_r * orbit.sin();
         let hr = 2.6_f32;
@@ -111,6 +111,14 @@ impl App {
             w,
             h,
         );
+
+        // Linhas decorativas horizontais acima e abaixo do titulo
+        let title_y = cy - 122.0;
+        let line_col = [0.25, 0.45, 0.70, 0.22];
+        let line_w = w * 0.45;
+        let line_x = (w - line_w) / 2.0;
+        b.rect(line_x, title_y - 12.0, line_w, 1.0, line_col, w, h);
+        b.rect(line_x, title_y + 80.0, line_w, 1.0, line_col, w, h);
 
         b
     }
@@ -476,6 +484,16 @@ impl App {
             h,
         );
 
+        // Linhas decorativas horizontais (estilo Stripe divider)
+        let line_col = [0.25, 0.45, 0.70, 0.20];
+        let line_w = w * 0.50;
+        let line_x = (w - line_w) / 2.0;
+
+        // Acima do titulo
+        b.rect(line_x, h * 0.11, line_w, 1.0, line_col, w, h);
+        // Abaixo do subtitulo
+        b.rect(line_x, h * 0.12 + 76.0, line_w, 1.0, line_col, w, h);
+
         b
     }
 
@@ -493,6 +511,13 @@ impl App {
         let anim_t = progress.anim_t;
         let cx = w / 2.0;
         let cy = h / 2.0;
+
+        // Linhas decorativas horizontais (consistencia visual com splash e home)
+        let line_col = [0.25, 0.45, 0.70, 0.18];
+        let line_w = w * 0.50;
+        let line_x = (w - line_w) / 2.0;
+        b.rect(line_x, h * 0.14, line_w, 1.0, line_col, w, h);
+        b.rect(line_x, h * 0.15 + 68.0, line_w, 1.0, line_col, w, h);
 
         // ── Fundo escuro ────────────────────────────────────────────
         b.rect(0.0, 0.0, w, h, [0.03, 0.04, 0.08, 1.0], w, h);
@@ -604,17 +629,28 @@ impl App {
         }
 
         // ── Barra de progresso principal ────────────────────────────
-        let bar_y = h * 0.82;
-        let bar_h = 6.0_f32;
+        let bar_y = h * 0.84;
+        let bar_h = 8.0_f32;
         let bar_x = w * 0.12;
         let bar_w = w * 0.76;
 
-        // Fundo da barra
-        b.rect(bar_x, bar_y, bar_w, bar_h, [0.08, 0.12, 0.22, 0.80], w, h);
+        // Fundo da barra (mais sutil)
+        b.rect(bar_x, bar_y, bar_w, bar_h, [0.06, 0.10, 0.20, 0.70], w, h);
+        // Borda superior fina
+        b.rect(bar_x, bar_y, bar_w, 1.0, [0.15, 0.25, 0.40, 0.30], w, h);
+        // Borda inferior fina
+        b.rect(
+            bar_x,
+            bar_y + bar_h - 1.0,
+            bar_w,
+            1.0,
+            [0.15, 0.25, 0.40, 0.20],
+            w,
+            h,
+        );
 
         // Preenchimento proporcional ao progresso
         let frac = if progress.total_slices > 0 {
-            // Durante slicing: baseado em fatias.  Demais fases: estimativa fixa.
             match &progress.phase {
                 InferPhase::PythonSetup => 0.01,
                 InferPhase::Preprocessing => 0.02,
@@ -630,19 +666,33 @@ impl App {
         };
 
         if frac > 0.0 {
-            let fill_w = (bar_w * frac).max(bar_h); // mínimo = altura para parecer um ponto
-            // Glow atrás do fill
+            let fill_w = (bar_w * frac).max(bar_h);
+            // Glow suave atras do fill
             b.rect(
                 bar_x,
-                bar_y - 1.5,
+                bar_y - 2.0,
                 fill_w,
-                bar_h + 3.0,
-                [0.20, 0.65, 0.95, 0.12],
+                bar_h + 4.0,
+                [0.20, 0.65, 0.95, 0.10],
                 w,
                 h,
             );
             // Fill principal
-            b.rect(bar_x, bar_y, fill_w, bar_h, [0.20, 0.65, 0.95, 0.90], w, h);
+            b.rect(bar_x, bar_y, fill_w, bar_h, [0.20, 0.65, 0.95, 0.88], w, h);
+
+            // Glow pulsante na ponta da barra (edge pulse)
+            let pulse = (progress.anim_t * 3.5).sin().abs();
+            let tip_w = 12.0_f32;
+            let tip_x = bar_x + fill_w - tip_w * 0.5;
+            b.rect(
+                tip_x.max(bar_x),
+                bar_y - 3.0,
+                tip_w,
+                bar_h + 6.0,
+                [0.40, 0.80, 1.0, 0.15 + 0.20 * pulse],
+                w,
+                h,
+            );
         }
 
         b
