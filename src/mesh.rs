@@ -2,12 +2,13 @@ use anyhow::{Context, Result};
 use bytemuck::{Pod, Zeroable};
 use wgpu::{Buffer, Device, util::DeviceExt};
 
-/// Vertice 3D com posicao e normal — layout exato do vertex buffer na GPU.
+/// Vertice 3D com posicao, normal e UV — layout exato do vertex buffer na GPU.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct Vertex3D {
     pub position: [f32; 3],
     pub normal: [f32; 3],
+    pub texcoord: [f32; 2],
 }
 
 impl Vertex3D {
@@ -15,7 +16,7 @@ impl Vertex3D {
     pub const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<Vertex3D>() as u64,
         step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2],
     };
 }
 
@@ -75,6 +76,7 @@ impl Mesh {
 
             // Calcular normais por face se ausentes no OBJ
             let has_normals = mesh.normals.len() == mesh.positions.len();
+            let has_uvs = mesh.texcoords.len() >= vertex_count * 2;
 
             for i in 0..vertex_count {
                 let pos = [
@@ -91,9 +93,15 @@ impl Mesh {
                 } else {
                     [0.0, 1.0, 0.0] // sera recalculado abaixo
                 };
+                let texcoord = if has_uvs {
+                    [mesh.texcoords[i * 2], mesh.texcoords[i * 2 + 1]]
+                } else {
+                    [0.0, 0.0]
+                };
                 vertices.push(Vertex3D {
                     position: pos,
                     normal,
+                    texcoord,
                 });
             }
 

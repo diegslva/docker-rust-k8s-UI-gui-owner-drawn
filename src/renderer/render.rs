@@ -47,6 +47,7 @@ impl GpuState {
             u.alpha = entry.alpha;
             u.roughness = entry.roughness;
             u.sss_strength = entry.sss_strength;
+            u.use_texture = entry.use_texture;
             let u_arr = [u];
             let bytes = cast_slice::<CameraUniform, u8>(&u_arr);
             let mut slot = [0u8; UNIFORM_ALIGN];
@@ -220,6 +221,7 @@ impl GpuState {
                     continue;
                 }
                 pass.set_bind_group(0, &self.camera_bind_group, &[(i * UNIFORM_ALIGN) as u32]);
+                pass.set_bind_group(1, &self.placeholder_texture_bg, &[]);
                 pass.set_vertex_buffer(0, entry.mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(entry.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..entry.mesh.index_count, 0, 0..1);
@@ -232,6 +234,7 @@ impl GpuState {
                     continue;
                 }
                 pass.set_bind_group(0, &self.camera_bind_group, &[(i * UNIFORM_ALIGN) as u32]);
+                pass.set_bind_group(1, &self.placeholder_texture_bg, &[]);
                 pass.set_vertex_buffer(0, entry.mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(entry.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..entry.mesh.index_count, 0, 0..1);

@@ -147,11 +147,85 @@ pub(crate) fn build_pipeline_2d_prim(
     })
 }
 
+/// Cria o bind group layout para texturas (group 1).
+pub(crate) fn build_texture_bind_group_layout(device: &Device) -> BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("texture_bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Cria uma textura placeholder 1x1 branca (para meshes sem textura).
+pub(crate) fn create_placeholder_texture(
+    device: &Device,
+    queue: &wgpu::Queue,
+) -> (Texture, wgpu::TextureView, wgpu::Sampler) {
+    let tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("placeholder_texture"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &tex,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &[255u8, 255, 255, 255],
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(4),
+            rows_per_image: None,
+        },
+        wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+    let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("placeholder_sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..Default::default()
+    });
+    (tex, view, sampler)
+}
+
 /// `alpha_blend`: false = pipeline opaca (tumores), true = pipeline transparente (cerebro).
 pub(crate) fn build_pipeline_3d(
     device: &Device,
     config: &SurfaceConfiguration,
     camera_bgl: &BindGroupLayout,
+    texture_bgl: &BindGroupLayout,
     alpha_blend: bool,
 ) -> RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -160,7 +234,7 @@ pub(crate) fn build_pipeline_3d(
     });
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("layout_3d"),
-        bind_group_layouts: &[camera_bgl],
+        bind_group_layouts: &[camera_bgl, texture_bgl],
         push_constant_ranges: &[],
     });
 
