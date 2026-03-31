@@ -10,6 +10,9 @@ pub(crate) enum InferMsg {
     PartialVolume { class: u8, volume_ml: f32 },
     /// Mudança de fase do pipeline.
     Phase(InferPhase),
+    /// Status textual do setup Python (progresso de download/instalacao).
+    #[allow(dead_code)]
+    SetupStatus(String),
     /// Pipeline concluído (true=sucesso, false=erro).
     Done(bool),
 }
@@ -17,6 +20,8 @@ pub(crate) enum InferMsg {
 /// Fases nominais do pipeline de inferência.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) enum InferPhase {
+    /// Configurando ambiente Python (download, venv, deps).
+    PythonSetup,
     Preprocessing,
     Slicing,
     MarchingCubes,
@@ -72,6 +77,7 @@ impl InferProgress {
                 3 => self.netc_volume_ml = *volume_ml,
                 _ => {}
             },
+            InferMsg::SetupStatus(_) => {} // tratado pela UI diretamente
             InferMsg::Done(_) => {}
         }
     }

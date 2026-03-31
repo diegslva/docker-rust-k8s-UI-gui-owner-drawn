@@ -616,6 +616,7 @@ impl App {
         let frac = if progress.total_slices > 0 {
             // Durante slicing: baseado em fatias.  Demais fases: estimativa fixa.
             match &progress.phase {
+                InferPhase::PythonSetup => 0.01,
                 InferPhase::Preprocessing => 0.02,
                 InferPhase::Slicing => {
                     0.05 + 0.80 * (progress.current_slice as f32 / progress.total_slices as f32)
