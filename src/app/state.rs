@@ -46,23 +46,31 @@ pub(crate) const WINDOW_WIDTH: f64 = 1280.0;
 pub(crate) const WINDOW_HEIGHT: f64 = 720.0;
 pub(crate) const ICON_BYTES: &[u8] = include_bytes!("../../assets/icon_256x256.png");
 
-/// Meshes permanentes do cérebro (compartilhadas entre todos os casos)
-pub(crate) const BRAIN_DEFS: &[(&str, [f32; 3], f32)] = &[
+/// Meshes permanentes do cerebro: (path, tint, alpha, texture_map_index).
+/// texture_map_index: 0=Color Map 1, 1=Color Map 2, 2=Color Map 3.
+/// Mapeamento extraido dos arquivos MTL do Turbosquid.
+pub(crate) const BRAIN_DEFS: &[(&str, [f32; 3], f32, usize)] = &[
+    // Brain_shader_4SG1 -> Color Map 3
     (
         concat!("assets/models/premium/", "Ventricles.obj"),
         VENTR_COLOR,
         VENTR_ALPHA,
+        2,
     ),
+    // Brain_shader_3_txt1SG -> Color Map 2
     (
         concat!("assets/models/premium/", "Thalmus_and_Optic_Tract.obj"),
         INNER_COLOR,
         INNER_ALPHA,
+        1,
     ),
     (
         concat!("assets/models/premium/", "Corpus_Callosum.obj"),
         INNER_COLOR,
         INNER_ALPHA,
+        1,
     ),
+    // phong1SG -> Color Map 3
     (
         concat!(
             "assets/models/premium/",
@@ -70,41 +78,52 @@ pub(crate) const BRAIN_DEFS: &[(&str, [f32; 3], f32)] = &[
         ),
         INNER_COLOR,
         INNER_ALPHA,
+        2,
     ),
+    // Brain_shader_1SG -> Color Map 1
     (
         concat!("assets/models/premium/", "Putamen_and_Amygdala.obj"),
         INNER_COLOR,
         INNER_ALPHA,
+        0,
     ),
     (
         concat!("assets/models/premium/", "Globus_Pallidus_Externus.obj"),
         INNER_COLOR,
         INNER_ALPHA,
+        0,
     ),
     (
         concat!("assets/models/premium/", "Globus_Pallidus_Internus.obj"),
         INNER_COLOR,
         INNER_ALPHA,
+        0,
     ),
     (
         concat!("assets/models/premium/", "Cerebellum.obj"),
         CEREB_COLOR,
         CEREB_ALPHA,
+        0,
     ),
+    // phong1SG -> Color Map 3
     (
         concat!("assets/models/premium/", "Medulla_and_Pons.obj"),
         CEREB_COLOR,
         CEREB_ALPHA,
+        2,
     ),
+    // Brain_shader_3_txt1SG -> Color Map 2
     (
         concat!("assets/models/premium/", "Left_Cerebral_Hemisphere.obj"),
         LH_COLOR,
         LH_ALPHA,
+        1,
     ),
     (
         concat!("assets/models/premium/", "Right_Cerebral_Hemisphere.obj"),
         RH_COLOR,
         RH_ALPHA,
+        1,
     ),
 ];
 
@@ -125,6 +144,8 @@ pub(crate) struct LoadedMesh {
     pub(crate) mesh: Mesh,
     pub(crate) tint: [f32; 3],
     pub(crate) alpha: f32,
+    /// Indice da textura do cerebro (0=Map1, 1=Map2, 2=Map3). None = sem textura (tumores).
+    pub(crate) texture_map_index: Option<usize>,
 }
 
 impl BrainViewMode {
@@ -279,10 +300,11 @@ pub(crate) fn load_brain_meshes_bg(
                         mesh: m,
                         tint: *tint,
                         alpha: *alpha,
+                        texture_map_index: None,
                     })
             })
             .collect();
-        for (path, tint, alpha) in BRAIN_DEFS {
+        for (path, tint, alpha, tex_idx) in BRAIN_DEFS {
             // Extrai filename do path (ex: "assets/models/premium/Ventricles.obj" -> "Ventricles.obj")
             let filename = std::path::Path::new(path)
                 .file_name()
@@ -299,6 +321,7 @@ pub(crate) fn load_brain_meshes_bg(
                     mesh: m,
                     tint: *tint,
                     alpha: *alpha,
+                    texture_map_index: Some(*tex_idx),
                 });
             }
         }
@@ -330,6 +353,7 @@ pub(crate) fn load_tumor_meshes_bg(
                         mesh: m,
                         tint: *tint,
                         alpha: *alpha,
+                        texture_map_index: None,
                     })
             })
             .collect();
@@ -375,6 +399,7 @@ impl App {
                         mesh: m,
                         tint: *tint,
                         alpha: *alpha,
+                        texture_map_index: None,
                     }),
                     Err(e) => {
                         tracing::warn!(error = %e, path = %path, "mesh de tumor nao encontrada")
