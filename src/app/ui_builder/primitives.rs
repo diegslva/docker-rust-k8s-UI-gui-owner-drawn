@@ -404,7 +404,7 @@ impl App {
 
         // Scan-lines sutis (efeito MRI ambiente)
         let scan_speeds = [0.14_f32, 0.22, 0.09];
-        let scan_alphas = [0.05_f32, 0.03, 0.025];
+        let scan_alphas = [0.018_f32, 0.012, 0.008];
         for (i, (&speed, &alpha)) in scan_speeds.iter().zip(scan_alphas.iter()).enumerate() {
             let offset = i as f32 * (h / 3.0);
             let y = ((t * speed + offset / h).fract() * h).clamp(0.0, h - 1.5);
@@ -524,7 +524,7 @@ impl App {
 
         // ── Scan-lines animadas (três velocidades diferentes) ───────
         let scan_speeds = [0.18_f32, 0.27, 0.11];
-        let scan_alphas = [0.07_f32, 0.05, 0.04];
+        let scan_alphas = [0.025_f32, 0.018, 0.012];
         for (i, (&speed, &alpha)) in scan_speeds.iter().zip(scan_alphas.iter()).enumerate() {
             let offset = i as f32 * (h / 3.0);
             let y = ((anim_t * speed + offset / h).fract() * h).clamp(0.0, h - 1.5);

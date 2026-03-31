@@ -620,7 +620,7 @@ impl App {
         let pct = (frac * 100.0).round() as u32;
 
         let phase_text = match &progress.phase {
-            InferPhase::PythonSetup => "Configurando ambiente Python...".to_string(),
+            InferPhase::PythonSetup => "Preparando ambiente de inferencia...".to_string(),
             InferPhase::Preprocessing => "Carregando e normalizando volume...".to_string(),
             InferPhase::Slicing => {
                 if progress.total_slices > 0 {
