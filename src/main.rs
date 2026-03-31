@@ -2,6 +2,7 @@ mod app;
 mod camera;
 mod embedded;
 mod mesh;
+mod python_env;
 mod renderer;
 mod ui;
 

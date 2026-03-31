@@ -581,6 +581,7 @@ impl App {
         // Fase atual
         use crate::app::infer::InferPhase;
         let phase_text = match &progress.phase {
+            InferPhase::PythonSetup => "Configurando ambiente Python...".to_string(),
             InferPhase::Preprocessing => "Carregando e normalizando volume...".to_string(),
             InferPhase::Slicing => {
                 if progress.total_slices > 0 {

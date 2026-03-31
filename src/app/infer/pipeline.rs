@@ -12,72 +12,6 @@ use tracing::{info, warn};
 
 use super::{InferMsg, InferPhase};
 
-/// Detecta o comando Python disponivel no sistema.
-///
-/// Windows: tenta `python` primeiro (PATH padrao), fallback `python3`.
-/// Linux: tenta `python3` primeiro (padrao em distros modernas), fallback `python`.
-fn find_python() -> Result<String, String> {
-    let candidates: &[&str] = if cfg!(target_os = "windows") {
-        &["python", "python3"]
-    } else {
-        &["python3", "python"]
-    };
-
-    for cmd in candidates {
-        let result = Command::new(cmd)
-            .args(["-c", "import sys; print(sys.version_info[:2])"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output();
-        if let Ok(out) = result {
-            if out.status.success() {
-                info!(python = %cmd, "Python encontrado");
-                return Ok(cmd.to_string());
-            }
-        }
-    }
-
-    Err("Python nao encontrado. Instale Python 3.10+ com: pip install nibabel onnxruntime-gpu scipy scikit-image".to_string())
-}
-
-#[allow(dead_code)]
-/// Verifica se Python e as dependencias necessarias estao disponiveis.
-///
-/// Retorna Ok com os providers ONNX disponiveis, ou Err com mensagem legivel.
-pub(crate) fn check_python_env() -> Result<String, String> {
-    let python = find_python()?;
-
-    let check_script = concat!(
-        "import nibabel, onnxruntime, scipy, skimage; ",
-        "import onnxruntime as ort; ",
-        "print(','.join(ort.get_available_providers()))"
-    );
-    let output = Command::new(&python)
-        .args(["-c", check_script])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output();
-    match output {
-        Ok(out) if out.status.success() => {
-            let providers = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            info!(providers = %providers, "ambiente Python verificado");
-            Ok(providers)
-        }
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            warn!(stderr = %stderr, "dependencias Python faltando");
-            Err(
-                "Dependencias Python faltando. Execute: pip install nibabel onnxruntime-gpu scipy scikit-image"
-                    .to_string(),
-            )
-        }
-        Err(e) => {
-            warn!(error = %e, "falha ao verificar Python");
-            Err(format!("Falha ao verificar Python: {}", e))
-        }
-    }
-}
-
 /// Inicia o subprocess Python de inferencia e retorna um receiver de progresso.
 ///
 /// Le stdout linha a linha em thread dedicada, parseia o protocolo `NEUROSCAN:*`
@@ -105,15 +39,26 @@ pub(crate) fn launch(input_path: &str, out_dir: &str) -> mpsc::Receiver<InferMsg
             }
         };
 
-        let python = match find_python() {
-            Ok(p) => p,
+        // Garantir ambiente Python (detecta sistema, cria venv, ou baixa standalone)
+        let _ = tx.send(InferMsg::Phase(InferPhase::PythonSetup));
+        let tx_setup = tx.clone();
+        let python_env = match crate::python_env::ensure_python_env(Some(Box::new(
+            move |msg: &str| {
+                let _ = tx_setup.send(InferMsg::SetupStatus(msg.to_string()));
+            },
+        ))) {
+            Ok(env) => {
+                info!(source = %env.source, python = %env.python_bin.display(), "ambiente Python pronto");
+                env
+            }
             Err(e) => {
-                warn!(error = %e, "Python nao encontrado");
+                warn!(error = %e, "falha ao configurar ambiente Python");
                 let _ = tx.send(InferMsg::Phase(InferPhase::Error(e)));
                 let _ = tx.send(InferMsg::Done(false));
                 return;
             }
         };
+        let python = python_env.python_bin.to_string_lossy().to_string();
 
         let script_path = assets.script_path.to_string_lossy().to_string();
         let model_path = assets.model_path.to_string_lossy().to_string();
