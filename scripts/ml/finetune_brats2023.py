@@ -210,7 +210,7 @@ def finetune() -> None:
     print(f"[train] device: {device}", flush=True)
     if device.type == "cuda":
         print(f"[train] GPU: {torch.cuda.get_device_name(0)}", flush=True)
-        print(f"[train] VRAM: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB", flush=True)
+        print(f"[train] VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB", flush=True)
 
     # 3. Carregar modelo pre-treinado
     model = UNet2D4Ch().to(device)
