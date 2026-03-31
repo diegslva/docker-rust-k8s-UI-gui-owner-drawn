@@ -45,6 +45,8 @@ impl GpuState {
             let mut u = *camera_uniform;
             u.tint = entry.tint;
             u.alpha = entry.alpha;
+            u.roughness = entry.roughness;
+            u.sss_strength = entry.sss_strength;
             let u_arr = [u];
             let bytes = cast_slice::<CameraUniform, u8>(&u_arr);
             let mut slot = [0u8; UNIFORM_ALIGN];

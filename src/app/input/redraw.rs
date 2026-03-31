@@ -291,10 +291,18 @@ impl App {
                         let entries: Vec<MeshEntry> = self
                             .meshes
                             .iter()
-                            .map(|m| MeshEntry {
-                                mesh: &m.mesh,
-                                tint: m.tint,
-                                alpha: m.alpha,
+                            .enumerate()
+                            .filter_map(|(i, m)| {
+                                self.brain_view.effective_alpha(i, m.alpha).map(|a| {
+                                    let is_brain = i >= crate::app::state::TUMOR_COUNT;
+                                    MeshEntry {
+                                        mesh: &m.mesh,
+                                        tint: m.tint,
+                                        alpha: a,
+                                        roughness: if is_brain { 0.7 } else { 0.3 },
+                                        sss_strength: if is_brain { 0.15 } else { 0.0 },
+                                    }
+                                })
                             })
                             .collect();
                         if let Err(e) = gpu.render(
@@ -489,10 +497,18 @@ impl App {
             let entries: Vec<MeshEntry> = self
                 .meshes
                 .iter()
-                .map(|m| MeshEntry {
-                    mesh: &m.mesh,
-                    tint: m.tint,
-                    alpha: m.alpha,
+                .enumerate()
+                .filter_map(|(i, m)| {
+                    self.brain_view.effective_alpha(i, m.alpha).map(|a| {
+                        let is_brain = i >= crate::app::state::TUMOR_COUNT;
+                        MeshEntry {
+                            mesh: &m.mesh,
+                            tint: m.tint,
+                            alpha: a,
+                            roughness: if is_brain { 0.7 } else { 0.3 },
+                            sss_strength: if is_brain { 0.15 } else { 0.0 },
+                        }
+                    })
                 })
                 .collect();
             if let Err(e) = gpu.render(

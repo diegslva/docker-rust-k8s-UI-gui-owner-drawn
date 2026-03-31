@@ -9,10 +9,12 @@ use glam::{Mat4, Vec3};
 pub struct CameraUniform {
     pub mvp: [[f32; 4]; 4],          // 64 bytes
     pub model_normal: [[f32; 4]; 4], // 64 bytes
-    pub light_dir: [f32; 3],         //  12 bytes
-    pub _pad: f32,                   //   4 bytes
-    pub tint: [f32; 3],              //  12 bytes
-    pub alpha: f32,                  //   4 bytes  (1.0=opaco, <1.0=transparente)
+    pub light_dir: [f32; 3],         // 12 bytes
+    pub roughness: f32,              //  4 bytes (0.0=espelho, 1.0=fosco)
+    pub tint: [f32; 3],              // 12 bytes
+    pub alpha: f32,                  //  4 bytes (1.0=opaco, <1.0=transparente)
+    pub sss_strength: f32,           //  4 bytes (subsurface scattering, 0.0=off)
+    pub _pad: [f32; 3],              // 12 bytes padding (total: 176)
 }
 
 pub struct OrbitalCamera {
@@ -56,9 +58,11 @@ impl OrbitalCamera {
             mvp: mvp.to_cols_array_2d(),
             model_normal: model_normal.to_cols_array_2d(),
             light_dir: light_dir.to_array(),
-            _pad: 0.0,
-            tint: [0.0; 3], // sobrescrito pelo renderer
-            alpha: 1.0,     // sobrescrito pelo renderer
+            roughness: 0.5,    // sobrescrito pelo renderer
+            tint: [0.0; 3],    // sobrescrito pelo renderer
+            alpha: 1.0,        // sobrescrito pelo renderer
+            sss_strength: 0.0, // sobrescrito pelo renderer
+            _pad: [0.0; 3],
         }
     }
 }
