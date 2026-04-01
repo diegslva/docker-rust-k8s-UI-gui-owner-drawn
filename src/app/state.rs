@@ -223,6 +223,15 @@ pub(crate) struct App {
     pub(crate) last_frame: Instant,
     pub(crate) mouse_pressed: bool,
     pub(crate) mouse_pos: Option<(f64, f64)>,
+    // MRI Slice Plane Viewer
+    pub(crate) slice_visible: bool,
+    pub(crate) slice_plane: crate::volume::SlicePlane,
+    /// Posicao do plano de corte normalizada [0.0, 1.0].
+    pub(crate) slice_position: f32,
+    /// Shift pressionado (para Shift+scroll mover o slice).
+    pub(crate) shift_held: bool,
+    /// Volume MRI carregado (apos inferencia).
+    pub(crate) volume: Option<crate::volume::VolumeData>,
 }
 
 impl App {
@@ -271,6 +280,11 @@ impl App {
             last_frame: Instant::now(),
             mouse_pressed: false,
             mouse_pos: None,
+            slice_visible: false,
+            slice_plane: crate::volume::SlicePlane::Axial,
+            slice_position: 0.5,
+            shift_held: false,
+            volume: None,
         }
     }
 }

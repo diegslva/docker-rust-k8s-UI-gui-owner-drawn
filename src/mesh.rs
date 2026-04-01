@@ -175,3 +175,77 @@ impl Mesh {
         })
     }
 }
+
+/// Gera vertices e indices de um quad de corte MRI posicionado no espaco 3D.
+///
+/// O quad e alinhado ao plano anatomico escolhido, com UVs [0,1] para texture sampling.
+pub fn generate_slice_quad(
+    plane: crate::volume::SlicePlane,
+    position: f32,
+    world_min: glam::Vec3,
+    world_max: glam::Vec3,
+) -> ([Vertex3D; 4], [u32; 6]) {
+    use crate::volume::SlicePlane;
+
+    let (v0, v1, v2, v3, normal) = match plane {
+        SlicePlane::Axial => {
+            // XY plane, varies Z
+            let z = world_min.z + position * (world_max.z - world_min.z);
+            (
+                glam::Vec3::new(world_min.x, world_min.y, z),
+                glam::Vec3::new(world_max.x, world_min.y, z),
+                glam::Vec3::new(world_max.x, world_max.y, z),
+                glam::Vec3::new(world_min.x, world_max.y, z),
+                [0.0, 0.0, 1.0],
+            )
+        }
+        SlicePlane::Coronal => {
+            // XZ plane, varies Y
+            let y = world_min.y + position * (world_max.y - world_min.y);
+            (
+                glam::Vec3::new(world_min.x, y, world_min.z),
+                glam::Vec3::new(world_max.x, y, world_min.z),
+                glam::Vec3::new(world_max.x, y, world_max.z),
+                glam::Vec3::new(world_min.x, y, world_max.z),
+                [0.0, 1.0, 0.0],
+            )
+        }
+        SlicePlane::Sagittal => {
+            // YZ plane, varies X
+            let x = world_min.x + position * (world_max.x - world_min.x);
+            (
+                glam::Vec3::new(x, world_min.y, world_min.z),
+                glam::Vec3::new(x, world_max.y, world_min.z),
+                glam::Vec3::new(x, world_max.y, world_max.z),
+                glam::Vec3::new(x, world_min.y, world_max.z),
+                [1.0, 0.0, 0.0],
+            )
+        }
+    };
+
+    let vertices = [
+        Vertex3D {
+            position: v0.to_array(),
+            normal,
+            texcoord: [0.0, 0.0],
+        },
+        Vertex3D {
+            position: v1.to_array(),
+            normal,
+            texcoord: [1.0, 0.0],
+        },
+        Vertex3D {
+            position: v2.to_array(),
+            normal,
+            texcoord: [1.0, 1.0],
+        },
+        Vertex3D {
+            position: v3.to_array(),
+            normal,
+            texcoord: [0.0, 1.0],
+        },
+    ];
+    let indices = [0u32, 1, 2, 0, 2, 3];
+
+    (vertices, indices)
+}

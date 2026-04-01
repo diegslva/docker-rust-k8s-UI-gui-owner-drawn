@@ -5,6 +5,7 @@ mod mesh;
 mod python_env;
 mod renderer;
 mod ui;
+mod volume;
 
 use anyhow::Result;
 use tracing_subscriber::{EnvFilter, fmt};

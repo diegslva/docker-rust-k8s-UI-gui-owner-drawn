@@ -10,6 +10,7 @@ use super::prim2d::VertexPrim;
 
 pub(crate) const SHADER_2D: &str = include_str!("../shader.wgsl");
 pub(crate) const SHADER_3D: &str = include_str!("../shader3d.wgsl");
+pub(crate) const SHADER_SLICE: &str = include_str!("../shader_slice.wgsl");
 pub(crate) const SHADER_2D_PRIM: &str = include_str!("../shader2d_prim.wgsl");
 pub(crate) const FONT_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
 pub(crate) const FONT_BOLD: &[u8] = include_bytes!("../../assets/fonts/Inter-Bold.ttf");
@@ -397,4 +398,173 @@ pub(crate) fn load_texture_from_bytes(
 
     info!(label, width, height, "textura carregada na GPU");
     Some(bind_group)
+}
+
+// ---------------------------------------------------------------------------
+// Volume 3D (MRI slice viewer)
+// ---------------------------------------------------------------------------
+
+/// SliceParams uniform — passado ao shader do slice plane.
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct SliceParams {
+    pub world_min: [f32; 3],
+    pub _pad0: f32,
+    pub world_max: [f32; 3],
+    pub alpha: f32,
+}
+
+/// Bind group layout para o volume 3D: texture_3d + sampler + SliceParams uniform.
+pub(crate) fn build_volume_bind_group_layout(device: &Device) -> BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("volume_bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        std::mem::size_of::<SliceParams>() as u64
+                    ),
+                },
+                count: None,
+            },
+        ],
+    })
+}
+
+/// Upload de volume 3D como textura GPU (R8Unorm, trilinear).
+pub(crate) fn upload_volume_texture(
+    device: &Device,
+    queue: &Queue,
+    data: &[u8],
+    width: u32,
+    height: u32,
+    depth: u32,
+) -> (Texture, wgpu::TextureView, wgpu::Sampler) {
+    let size = wgpu::Extent3d {
+        width,
+        height,
+        depth_or_array_layers: depth,
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("mri_volume"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D3,
+        format: wgpu::TextureFormat::R8Unorm,
+        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        data,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width),
+            rows_per_image: Some(height),
+        },
+        size,
+    );
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("volume_sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Linear,
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        ..Default::default()
+    });
+    info!(width, height, depth, "volume 3D carregado na GPU");
+    (texture, view, sampler)
+}
+
+/// Pipeline de rendering do slice plane (shader_slice.wgsl).
+pub(crate) fn build_pipeline_slice(
+    device: &Device,
+    config: &SurfaceConfiguration,
+    camera_bgl: &BindGroupLayout,
+    volume_bgl: &BindGroupLayout,
+) -> RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("shader_slice"),
+        source: wgpu::ShaderSource::Wgsl(SHADER_SLICE.into()),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("layout_slice"),
+        bind_group_layouts: &[camera_bgl, volume_bgl],
+        push_constant_ranges: &[],
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("pipeline_slice"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[Vertex3D::LAYOUT],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: config.format,
+                blend: Some(BlendState {
+                    color: BlendComponent {
+                        src_factor: BlendFactor::SrcAlpha,
+                        dst_factor: BlendFactor::OneMinusSrcAlpha,
+                        operation: BlendOperation::Add,
+                    },
+                    alpha: BlendComponent {
+                        src_factor: BlendFactor::One,
+                        dst_factor: BlendFactor::OneMinusSrcAlpha,
+                        operation: BlendOperation::Add,
+                    },
+                }),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: None, // visivel de ambos os lados
+            ..Default::default()
+        },
+        depth_stencil: Some(DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: false, // semi-transparente
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
 }
