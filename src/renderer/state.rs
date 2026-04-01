@@ -60,6 +60,13 @@ pub struct GpuState {
     // Texto de overlay (itens do menu dropdown) — renderizado sobre o overlay de primitivas
     pub(crate) menu_text_atlas: TextAtlas,
     pub(crate) menu_text_renderer: TextRenderer,
+    // MRI Slice Plane Viewer
+    pub(crate) volume_bind_group_layout: BindGroupLayout,
+    pub(crate) pipeline_slice: Option<RenderPipeline>,
+    pub(crate) volume_bind_group: Option<BindGroup>,
+    pub(crate) slice_params_buffer: Buffer,
+    pub(crate) slice_quad_vb: Buffer,
+    pub(crate) slice_quad_ib: Buffer,
 }
 
 impl GpuState {
@@ -286,7 +293,28 @@ impl GpuState {
             }),
         );
 
-        info!("GpuState: pipeline 2D + 3D opaque + 3D alpha + prim2D + texto + overlay");
+        // MRI Slice Plane Viewer
+        let volume_bind_group_layout = pipelines::build_volume_bind_group_layout(&device);
+        let slice_params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("slice_params_buf"),
+            size: std::mem::size_of::<pipelines::SliceParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let slice_quad_vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("slice_quad_vb"),
+            size: (4 * std::mem::size_of::<crate::mesh::Vertex3D>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let slice_quad_ib = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("slice_quad_ib"),
+            size: (6 * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        info!("GpuState: pipeline 2D + 3D opaque + 3D alpha + prim2D + texto + overlay + slice");
 
         Ok(Self {
             surface,
@@ -317,7 +345,52 @@ impl GpuState {
             text_renderer,
             menu_text_atlas,
             menu_text_renderer,
+            volume_bind_group_layout,
+            pipeline_slice: None,
+            volume_bind_group: None,
+            slice_params_buffer,
+            slice_quad_vb,
+            slice_quad_ib,
         })
+    }
+
+    /// Upload de volume MRI como textura 3D na GPU.
+    pub fn upload_volume(&mut self, vol: &crate::volume::VolumeData) {
+        let [w, h, d] = vol.dims;
+        let (_, view, sampler) =
+            pipelines::upload_volume_texture(&self.device, &self.queue, &vol.data, w, h, d);
+
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("volume_bg"),
+            layout: &self.volume_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.slice_params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        self.volume_bind_group = Some(bind_group);
+
+        // Criar pipeline do slice (lazy — depende do bind group layout)
+        if self.pipeline_slice.is_none() {
+            self.pipeline_slice = Some(pipelines::build_pipeline_slice(
+                &self.device,
+                &self.config,
+                &self.camera_bind_group_layout,
+                &self.volume_bind_group_layout,
+            ));
+        }
+
+        info!("volume MRI carregado na GPU ({w}x{h}x{d})");
     }
 
     pub fn font_system_mut(&mut self) -> &mut FontSystem {

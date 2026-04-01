@@ -49,6 +49,29 @@ impl App {
                                     self.dialog_rx = Some(rx);
                                 }
                             }
+                            // MRI Slice Plane controls
+                            "4" => {
+                                self.slice_visible = !self.slice_visible;
+                                tracing::info!(visible = self.slice_visible, "toggle slice plane");
+                            }
+                            "1" => {
+                                self.slice_plane = crate::volume::SlicePlane::Axial;
+                                tracing::info!("slice plane: axial");
+                            }
+                            "2" => {
+                                self.slice_plane = crate::volume::SlicePlane::Coronal;
+                                tracing::info!("slice plane: coronal");
+                            }
+                            "3" => {
+                                self.slice_plane = crate::volume::SlicePlane::Sagittal;
+                                tracing::info!("slice plane: sagittal");
+                            }
+                            "+" | "=" => {
+                                self.slice_position = (self.slice_position + 0.01).min(1.0);
+                            }
+                            "-" => {
+                                self.slice_position = (self.slice_position - 0.01).max(0.0);
+                            }
                             _ => {}
                         },
                         Key::Named(NamedKey::F2) => {
@@ -312,14 +335,24 @@ impl App {
                 }
             }
 
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.shift_held = modifiers.state().shift_key();
+            }
+
             WindowEvent::MouseWheel { delta, .. } => {
                 self.last_interaction = std::time::Instant::now();
                 let scroll = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(p) => p.y as f32 * 0.01,
                 };
-                self.camera.distance =
-                    (self.camera.distance - scroll * ZOOM_SENSITIVITY).clamp(ZOOM_MIN, ZOOM_MAX);
+                if self.shift_held && self.slice_visible {
+                    // Shift + scroll: move slice plane
+                    self.slice_position = (self.slice_position + scroll * 0.02).clamp(0.0, 1.0);
+                } else {
+                    // Scroll normal: zoom camera
+                    self.camera.distance = (self.camera.distance - scroll * ZOOM_SENSITIVITY)
+                        .clamp(ZOOM_MIN, ZOOM_MAX);
+                }
             }
 
             WindowEvent::Resized(new_size) => {

@@ -276,12 +276,33 @@ def main() -> None:
         netc_ml = volume_mls.get("NETC", 0.0)
         total_ml = round(et_ml + snfh_ml + netc_ml, 1)
 
+        # Exportar volume FLAIR para slice viewer 3D (uint8, shape D,H,W)
+        if n_channels == 4:
+            flair = volume[:, :, :, 0]  # canal FLAIR (indice 0)
+        else:
+            flair = volume
+        brain_mask = flair > 0
+        if brain_mask.sum() > 0:
+            flair_norm = np.zeros_like(flair, dtype=np.float32)
+            vals = flair[brain_mask]
+            lo, hi = np.percentile(vals, [1, 99])
+            flair_norm[brain_mask] = np.clip((vals - lo) / (hi - lo + 1e-8), 0, 1)
+            flair_u8 = (flair_norm * 255).astype(np.uint8)
+        else:
+            flair_u8 = np.zeros_like(flair, dtype=np.uint8)
+        # Transpor (H, W, D) -> (D, H, W) para compatibilidade com wgpu write_texture
+        flair_dhw = np.ascontiguousarray(flair_u8.transpose(2, 0, 1))
+        np.save(out_dir / "volume_flair.npy", flair_dhw)
+
+        H, W, D = flair.shape[:3]
+
         scan_meta = {
             "case_id":         input_path.stem.replace(".nii", ""),
             "dataset":         "BraTS 2021",
             "modalities":      "FLAIR \u00b7 T1w \u00b7 T1ce \u00b7 T2w" if n_channels == 4 else "FLAIR",
             "model_name":      f"nnUNet {n_channels}-canais",
             "channels":        n_channels,
+            "volume_dims":     [int(H), int(W), int(D)],
             "et_volume_ml":    et_ml,
             "snfh_volume_ml":  snfh_ml,
             "netc_volume_ml":  netc_ml,
