@@ -466,8 +466,8 @@ impl App {
 
         // --- Callout box de medicao (fundo + borda dourada) ---
         if self.measure_active && self.measure_point_a.is_some() && self.measure_point_b.is_some() {
-            let cx = w - 260.0;
-            let cy = h * 0.38;
+            let cx = (w * 0.72).min(w - 270.0);
+            let cy = h * 0.50;
             let bw = 240.0;
             let bh = 82.0;
             // Fundo

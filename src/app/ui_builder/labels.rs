@@ -499,13 +499,21 @@ impl App {
             if let Some((nx, ny)) =
                 crate::app::projection::project_to_screen(north, &cam_u.mvp, w, h)
             {
-                let lbl = Label::new(fs, "N", 9.0, Color::rgb(100, 160, 220), nx - 4.0, ny - 14.0);
+                let lbl = Label::new_bold(
+                    fs,
+                    "N",
+                    12.0,
+                    Color::rgb(140, 190, 240),
+                    nx - 5.0,
+                    ny - 18.0,
+                );
                 always.push(lbl);
             }
             if let Some((sx, sy)) =
                 crate::app::projection::project_to_screen(south, &cam_u.mvp, w, h)
             {
-                let lbl = Label::new(fs, "S", 9.0, Color::rgb(80, 120, 170), sx - 4.0, sy + 4.0);
+                let lbl =
+                    Label::new_bold(fs, "S", 12.0, Color::rgb(110, 155, 200), sx - 5.0, sy + 6.0);
                 always.push(lbl);
             }
         }
@@ -522,9 +530,9 @@ impl App {
                 let dist = crate::app::projection::distance_mm(a.world_pos, b.world_pos, scale, up);
                 let dist_text = format!("{:.1} mm", dist);
 
-                // Callout fixo: canto superior direito, abaixo do SNFH
-                let cx = w - 260.0;
-                let cy = h * 0.38;
+                // Callout fixo: centro-direito da tela
+                let cx = (w * 0.72).min(w - 270.0);
+                let cy = h * 0.50;
 
                 always.push(Label::new_bold(
                     fs,
