@@ -19,6 +19,14 @@ impl App {
         let dt = self.last_frame.elapsed().as_secs_f32().min(0.05);
         self.last_frame = std::time::Instant::now();
 
+        // Tooltip fade timer
+        if self.tooltip_timer > 0.0 {
+            self.tooltip_timer -= dt;
+            if self.tooltip_timer <= 0.0 {
+                self.tooltip_text = None;
+            }
+        }
+
         // ─────────────────────────────────────────────────────────────
         // SPLASH SCREEN — exibida enquanto os meshes carregam em fundo
         // ─────────────────────────────────────────────────────────────
