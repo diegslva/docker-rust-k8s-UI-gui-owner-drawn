@@ -38,6 +38,7 @@ impl GpuState {
         primitives: &Prim2DBatch,
         overlay_prims: &Prim2DBatch,
         overlay_labels: &[&Label],
+        slice_active: bool,
     ) -> Result<()> {
         // -- Uniforms por mesh -----------------------------------------------
         for (i, entry) in meshes.iter().enumerate() {
@@ -246,6 +247,20 @@ impl GpuState {
                 pass.set_vertex_buffer(0, entry.mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(entry.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..entry.mesh.index_count, 0, 0..1);
+            }
+
+            // 3.5 MRI Slice Plane (semi-transparente, entre cerebro e UI)
+            if slice_active {
+                if let (Some(pipeline), Some(vol_bg)) =
+                    (&self.pipeline_slice, &self.volume_bind_group)
+                {
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, &self.camera_bind_group, &[0]);
+                    pass.set_bind_group(1, vol_bg, &[]);
+                    pass.set_vertex_buffer(0, self.slice_quad_vb.slice(..));
+                    pass.set_index_buffer(self.slice_quad_ib.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..6, 0, 0..1);
+                }
             }
 
             // 4. Primitivas de cena (callout lines + box backgrounds)
