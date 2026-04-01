@@ -65,6 +65,17 @@ impl App {
                                 self.tooltip_timer = 2.5;
                                 tracing::info!(active = self.measure_active, "toggle medicao");
                             }
+                            // Gimbal de orientacao
+                            "g" | "G" => {
+                                self.show_gimbal = !self.show_gimbal;
+                                let msg = if self.show_gimbal {
+                                    "Orientacao ativa (N/S)"
+                                } else {
+                                    "Orientacao desativada"
+                                };
+                                self.tooltip_text = Some(msg.to_string());
+                                self.tooltip_timer = 2.0;
+                            }
                             // Help overlay
                             "h" | "H" => {
                                 self.show_help = !self.show_help;

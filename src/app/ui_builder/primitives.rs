@@ -405,6 +405,65 @@ impl App {
             }
         }
 
+        // --- Gimbal de orientacao (3 aneis circulares projetados) ---
+        if self.show_gimbal {
+            let segs = 64_usize;
+            let radius = 1.2_f32; // raio no espaco world (cobre o cerebro)
+            let ring_alpha = 0.18_f32;
+
+            // Cores: equatorial=azul, frontal=verde, lateral=vermelho
+            let rings: &[([f32; 3], fn(f32, f32) -> glam::Vec3)] = &[
+                // Equatorial (horizontal XZ, Y=0)
+                ([0.30, 0.55, 0.85], |cos, sin| {
+                    glam::Vec3::new(cos, 0.0, sin)
+                }),
+                // Frontal (vertical XY, Z=0)
+                ([0.40, 0.75, 0.40], |cos, sin| {
+                    glam::Vec3::new(cos, sin, 0.0)
+                }),
+                // Lateral (vertical YZ, X=0)
+                ([0.75, 0.40, 0.40], |cos, sin| {
+                    glam::Vec3::new(0.0, sin, cos)
+                }),
+            ];
+
+            for (color, point_fn) in rings {
+                for i in 0..segs {
+                    let a0 = (i as f32 / segs as f32) * std::f32::consts::TAU;
+                    let a1 = ((i + 1) as f32 / segs as f32) * std::f32::consts::TAU;
+                    let p0 = point_fn(a0.cos() * radius, a0.sin() * radius);
+                    let p1 = point_fn(a1.cos() * radius, a1.sin() * radius);
+                    if let (Some((x0, y0)), Some((x1, y1))) = (
+                        crate::app::projection::project_to_screen(p0, mvp, w, h),
+                        crate::app::projection::project_to_screen(p1, mvp, w, h),
+                    ) {
+                        b.line(
+                            x0,
+                            y0,
+                            x1,
+                            y1,
+                            [color[0], color[1], color[2], ring_alpha],
+                            1.0,
+                            w,
+                            h,
+                        );
+                    }
+                }
+            }
+
+            // Marcadores N (topo) e S (base)
+            let north = glam::Vec3::new(0.0, radius * 1.05, 0.0);
+            let south = glam::Vec3::new(0.0, -radius * 1.05, 0.0);
+            if let Some((nx, ny)) = crate::app::projection::project_to_screen(north, mvp, w, h) {
+                // N = ponto azul
+                b.rect(nx - 3.0, ny - 3.0, 6.0, 6.0, [0.30, 0.55, 0.85, 0.50], w, h);
+            }
+            if let Some((sx, sy)) = crate::app::projection::project_to_screen(south, mvp, w, h) {
+                // S = ponto mais escuro
+                b.rect(sx - 2.5, sy - 2.5, 5.0, 5.0, [0.25, 0.40, 0.60, 0.35], w, h);
+            }
+        }
+
         // --- Callout box de medicao (fundo + borda dourada) ---
         if self.measure_active && self.measure_point_a.is_some() && self.measure_point_b.is_some() {
             let cx = w - 260.0;

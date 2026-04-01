@@ -228,6 +228,8 @@ impl App {
             always.push(help_hint);
             let measure_hint = Label::new(fs, "M  Medir", 10.5, hint_col, 280.0, h - 20.0);
             always.push(measure_hint);
+            let gimbal_hint = Label::new(fs, "G  Orientacao", 10.5, hint_col, 360.0, h - 20.0);
+            always.push(gimbal_hint);
         }
 
         // ── Marca d'água "NeuroScan" ─────────────────────────────────────────
@@ -488,6 +490,26 @@ impl App {
             always.push(sl);
         }
 
+        // --- Labels N/S do gimbal ---
+        if self.show_gimbal {
+            let radius = 1.2_f32;
+            let cam_u = self.camera.build_uniform(w as u32, h as u32);
+            let north = glam::Vec3::new(0.0, radius * 1.12, 0.0);
+            let south = glam::Vec3::new(0.0, -radius * 1.12, 0.0);
+            if let Some((nx, ny)) =
+                crate::app::projection::project_to_screen(north, &cam_u.mvp, w, h)
+            {
+                let lbl = Label::new(fs, "N", 9.0, Color::rgb(100, 160, 220), nx - 4.0, ny - 14.0);
+                always.push(lbl);
+            }
+            if let Some((sx, sy)) =
+                crate::app::projection::project_to_screen(south, &cam_u.mvp, w, h)
+            {
+                let lbl = Label::new(fs, "S", 9.0, Color::rgb(80, 120, 170), sx - 4.0, sy + 4.0);
+                always.push(lbl);
+            }
+        }
+
         // --- Callout de medicao (estilo fixo, igual ET/SNFH/NETC) ---
         if self.measure_active {
             let measure_col = Color::rgb(255, 200, 100);
@@ -590,6 +612,7 @@ impl App {
                 ("1/2/3", "Plano axial / coronal / sagital"),
                 ("Shift+Scroll", "Mover plano de corte"),
                 ("M", "Medicao (distancia entre dois pontos)"),
+                ("G", "Orientacao 3D (aneis N/S)"),
                 ("Esc", "Voltar a tela inicial"),
                 ("Setas", "Navegar entre casos clinicos"),
             ];

@@ -242,6 +242,8 @@ pub(crate) struct App {
     // Help overlay (H) com fade-in/out
     pub(crate) show_help: bool,
     pub(crate) help_anim_t: f32, // 0.0=fechado, 1.0=aberto
+    // Gimbal de orientacao (G)
+    pub(crate) show_gimbal: bool,
 }
 
 impl App {
@@ -302,6 +304,7 @@ impl App {
             tooltip_timer: 0.0,
             show_help: false,
             help_anim_t: 0.0,
+            show_gimbal: false,
         }
     }
 }
