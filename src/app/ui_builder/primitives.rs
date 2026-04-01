@@ -577,15 +577,14 @@ impl App {
             }
         }
 
-        // --- Help overlay background (fade-in/out) ---
-        if self.help_anim_t > 0.01 {
-            let alpha = self.help_anim_t * 0.88;
+        // --- Help overlay background (instantaneo, opaco) ---
+        if self.show_help {
             b.rect(
                 0.0,
                 0.0,
                 w,
                 h,
-                [BG_DEEP[0], BG_DEEP[1], BG_DEEP[2], alpha],
+                [BG_DEEP[0], BG_DEEP[1], BG_DEEP[2], 0.95],
                 w,
                 h,
             );

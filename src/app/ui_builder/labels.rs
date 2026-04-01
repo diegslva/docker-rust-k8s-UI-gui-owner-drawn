@@ -604,11 +604,10 @@ impl App {
             }
         }
 
-        // --- Help overlay (H) com fade-in/out ---
-        if self.help_anim_t > 0.01 {
-            let ha = self.help_anim_t;
+        // --- Help overlay (H) — instantaneo, sem fade ---
+        if self.show_help {
             let help_items = [
-                ("H", "Mostrar/ocultar esta ajuda"),
+                ("H", "Fechar esta ajuda"),
                 ("I", "Painel clinico (dados volumetricos)"),
                 ("O", "Abrir volume NIfTI"),
                 ("F2", "Cerebro transparente / apenas tumores"),
@@ -622,19 +621,12 @@ impl App {
                 ("Esc", "Voltar a tela inicial"),
                 ("Setas", "Navegar entre casos clinicos"),
             ];
-            let box_w = 380.0_f32;
-            let box_x = (w - box_w) / 2.0;
+            let help_box_w = 380.0_f32;
+            let help_box_x = (w - help_box_w) / 2.0;
             let mut hy = h * 0.18;
 
-            let alpha_u8 = (ha * 255.0) as u8;
-            let mut title = Label::new_bold(
-                fs,
-                "Atalhos do NeuroScan",
-                14.0,
-                Color::rgba(200, 222, 245, alpha_u8),
-                0.0,
-                0.0,
-            );
+            let mut title =
+                Label::new_bold(fs, "Atalhos do NeuroScan", 14.0, col_header(), 0.0, 0.0);
             title.x = (w - title.measured_width()) / 2.0;
             title.y = hy;
             always.push(title);
@@ -646,19 +638,12 @@ impl App {
                     fs,
                     &key_text,
                     11.0,
-                    Color::rgba(120, 180, 240, alpha_u8),
-                    box_x,
+                    Color::rgb(120, 180, 240),
+                    help_box_x,
                     hy,
                 );
                 always.push(kl);
-                let dl = Label::new(
-                    fs,
-                    desc,
-                    11.0,
-                    Color::rgba(160, 192, 220, alpha_u8),
-                    box_x + 120.0,
-                    hy,
-                );
+                let dl = Label::new(fs, desc, 11.0, col_value(), help_box_x + 120.0, hy);
                 always.push(dl);
                 hy += 22.0;
             }

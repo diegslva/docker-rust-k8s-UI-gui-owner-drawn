@@ -27,17 +27,7 @@ impl App {
                 self.labels_dirty = true;
             }
         }
-        // Help overlay fade animation
-        let help_speed = 12.0; // 0→1 em ~0.08s (quase instantaneo)
-        if self.show_help {
-            self.help_anim_t = (self.help_anim_t + dt * help_speed).min(1.0);
-        } else {
-            self.help_anim_t = (self.help_anim_t - dt * help_speed).max(0.0);
-        }
-        // Help fade requer rebuild de labels (alpha dos textos muda)
-        if self.help_anim_t > 0.01 && self.help_anim_t < 0.99 {
-            self.labels_dirty = true;
-        }
+        // (help overlay e instantaneo — sem animacao de fade)
 
         // ─────────────────────────────────────────────────────────────
         // SPLASH SCREEN — exibida enquanto os meshes carregam em fundo
