@@ -505,12 +505,12 @@ impl App {
                 always.push(lbl);
             }
 
-            // Backup: sempre mostrar distancia no canto inferior centralizado
+            // Distancia sempre visivel: grande, centralizado, acima da legenda
             let full_text = format!("Distancia: {:.1} mm", dist);
             let mut backup =
-                Label::new_bold(fs, &full_text, 13.0, Color::rgb(255, 220, 130), 0.0, 0.0);
+                Label::new_bold(fs, &full_text, 18.0, Color::rgb(255, 230, 140), 0.0, 0.0);
             backup.x = (w - backup.measured_width()) / 2.0;
-            backup.y = h - 75.0;
+            backup.y = h * 0.88;
             always.push(backup);
         }
 

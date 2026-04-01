@@ -322,36 +322,15 @@ impl App {
                         if let Some(hit) = best_hit {
                             let pt = crate::app::projection::MeasurePoint { world_pos: hit };
                             if self.measure_point_a.is_none() {
-                                self.measure_point_a = Some(pt);
-                                self.tooltip_text =
-                                    Some("Ponto A marcado -- clique no ponto B".into());
-                                self.tooltip_timer = 2.0;
-                            } else if self.measure_point_b.is_none() {
-                                self.measure_point_b = Some(pt);
-                                // Calcular distancia
-                                if let Some(a) = &self.measure_point_a {
-                                    let scale =
-                                        self.volume.as_ref().map_or(181.28, |v| v.scale as f32);
-                                    let up = self
-                                        .volume
-                                        .as_ref()
-                                        .map_or(2.0, |v| v.upsample_factor as f32);
-                                    let dist = crate::app::projection::distance_mm(
-                                        a.world_pos,
-                                        pt.world_pos,
-                                        scale,
-                                        up,
-                                    );
-                                    self.tooltip_text = Some(format!("Distancia: {:.1} mm", dist));
-                                    self.tooltip_timer = 5.0;
-                                }
-                            } else {
-                                // Reset: novo par de pontos
+                                // Primeiro clique: marca ponto A
                                 self.measure_point_a = Some(pt);
                                 self.measure_point_b = None;
                                 self.tooltip_text =
                                     Some("Ponto A marcado -- clique no ponto B".into());
-                                self.tooltip_timer = 2.0;
+                                self.tooltip_timer = 2.5;
+                            } else {
+                                // Segundo+ clique: marca/move ponto B (distancia aparece)
+                                self.measure_point_b = Some(pt);
                             }
                         }
                         return; // Nao inicia drag de camera
