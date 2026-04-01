@@ -139,11 +139,15 @@ pub fn menu_entries(
         2 => vec![
             (format!("NeuroScan  v{}", pkg_version), String::new(), false),
             (
-                "nnUNet 2D  \u{00B7}  BraTS 2021".into(),
+                "nnUNet 2D  \u{00B7}  BraTS 2021 + 2023".into(),
                 String::new(),
                 false,
             ),
-            ("Dice 0.865".into(), String::new(), false),
+            (
+                "Dice 0.822  \u{00B7}  1.735 casos".into(),
+                String::new(),
+                false,
+            ),
             (String::new(), String::new(), true),
             (
                 "Diego L. Silva  \u{00B7}  github.com/diegslva".into(),

@@ -248,7 +248,7 @@ impl App {
         // ── Rodapé técnico (canto inferior direito) ───────────────────────────
         {
             let footer = format!(
-                "NeuroScan AI  \u{00B7}  v{}  \u{00B7}  nnUNet 2D  \u{00B7}  BraTS 2021  \u{00B7}  Dice 0.865",
+                "NeuroScan AI  \u{00B7}  v{}  \u{00B7}  nnUNet 2D  \u{00B7}  BraTS 2021+2023  \u{00B7}  1.735 casos",
                 env!("CARGO_PKG_VERSION")
             );
             let mut ft = Label::new(fs, &footer, 9.0, col_section(), 0.0, 0.0);
@@ -367,7 +367,7 @@ impl App {
         py += 3.0;
         panel.push(Label::new(
             fs,
-            "* Dados pop. BraTS 2021. Não substitui laudo.",
+            "* Dados pop. BraTS 2021+2023. Nao substitui laudo.",
             8.5,
             col_section(),
             pl,
@@ -424,8 +424,8 @@ impl App {
 
         section!("METODOLOGIA");
         kv!("Segmentação", "nnUNet 2D Slice");
-        kv!("Treinamento", "484 casos BraTS 2021");
-        kv!("Acurácia", "Dice 0.865");
+        kv!("Treinamento", "1.735 casos BraTS 2021+2023");
+        kv!("Acurácia", "Dice 0.822 (ET 0.924)");
         kv!("Modalidades", "FLAIR/T1w/T1ce/T2w");
         kv!("Resolução", "1mm isotrópico");
         kv!("Referência", "WHO CNS 2021");
