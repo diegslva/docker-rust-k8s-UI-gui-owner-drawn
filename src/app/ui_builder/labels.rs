@@ -566,18 +566,7 @@ impl App {
                     my + 62.0,
                 ));
 
-                // Label projetado no 3D (branco na linha A-B)
-                let mid_3d = (a.world_pos + b.world_pos) * 0.5;
-                let cam_u = self.camera.build_uniform(w as u32, h as u32);
-                if let Some((sx, sy)) =
-                    crate::app::projection::project_to_screen(mid_3d, &cam_u.mvp, w, h)
-                {
-                    let mut lbl =
-                        Label::new_bold(fs, &vol_str, 13.0, Color::rgb(255, 255, 255), 0.0, 0.0);
-                    lbl.x = sx - lbl.measured_width() / 2.0;
-                    lbl.y = sy - 18.0;
-                    always.push(lbl);
-                }
+                // (distancia ja mostrada no callout fixo — sem label duplicado no 3D)
             } else if self.measure_point_a.is_some() {
                 always.push(Label::new(
                     fs,

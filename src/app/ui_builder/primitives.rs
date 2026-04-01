@@ -472,6 +472,37 @@ impl App {
             b.rect(mx, my, box_w, box_h, bg, w, h);
             b.rect(mx, my + 2.0, box_w, box_h - 2.0, inner_ov, w, h);
             b.rect(mx, my, box_w, 2.0, measure_border, w, h);
+
+            // Linha de conexao do callout ate o ponto medio A-B (igual ET/SNFH/NETC)
+            if let (Some(a), Some(bp)) = (&self.measure_point_a, &self.measure_point_b) {
+                let mid_3d = (a.world_pos + bp.world_pos) * 0.5;
+                if let Some((target_x, target_y)) =
+                    crate::app::projection::project_to_screen(mid_3d, mvp, w, h)
+                {
+                    let callout_edge_x = mx;
+                    let callout_edge_y = my + box_h / 2.0;
+                    b.line(
+                        callout_edge_x,
+                        callout_edge_y,
+                        target_x,
+                        target_y,
+                        [1.0, 0.78, 0.30, 0.45],
+                        1.2,
+                        w,
+                        h,
+                    );
+                    // Dot pulsante no alvo (igual aos callouts ET/SNFH/NETC)
+                    b.rect(
+                        target_x - dot_r,
+                        target_y - dot_r,
+                        dot_r * 2.0,
+                        dot_r * 2.0,
+                        [1.0, 0.78, 0.30, 0.90],
+                        w,
+                        h,
+                    );
+                }
+            }
         }
 
         // --- Marcadores de medicao (pontos + linha) ---
