@@ -195,6 +195,9 @@ pub(crate) struct App {
     pub(crate) splash_fade: f32,
     pub(crate) splash_rx: Option<mpsc::Receiver<Vec<LoadedMesh>>>,
     pub(crate) splash_labels: Vec<Label>,
+    // Tela de login — mostrada apos splash, antes da home
+    pub(crate) show_login: bool,
+    pub(crate) login_screen: Option<crate::app::login::LoginScreen>,
     // Tela inicial (home screen) — mostrada após splash, antes de qualquer inferência
     pub(crate) show_home: bool,
     pub(crate) home_labels: Vec<Label>,
@@ -273,7 +276,9 @@ impl App {
             splash_fade: 0.0,
             splash_rx: None,
             splash_labels: Vec::new(),
-            show_home: true,
+            show_login: true,
+            login_screen: None, // criado apos saber o tamanho da janela
+            show_home: false,   // home so aparece apos login
             home_labels: Vec::new(),
             home_anim_t: 0.0,
             python_env_error: None,
