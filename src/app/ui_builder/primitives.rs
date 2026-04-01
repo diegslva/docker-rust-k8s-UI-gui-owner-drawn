@@ -405,6 +405,20 @@ impl App {
             }
         }
 
+        // --- Callout box de medicao (fundo + borda dourada) ---
+        if self.measure_active && self.measure_point_a.is_some() && self.measure_point_b.is_some() {
+            let cx = w - 260.0;
+            let cy = h * 0.38;
+            let bw = 240.0;
+            let bh = 82.0;
+            // Fundo
+            b.rect(cx, cy, bw, bh, BG_SURFACE, w, h);
+            // Overlay sutil
+            b.rect(cx, cy, bw, bh, [0.25, 0.20, 0.10, 0.08], w, h);
+            // Borda superior dourada
+            b.rect(cx, cy, bw, 2.0, [1.0, 0.78, 0.30, 0.90], w, h);
+        }
+
         // --- Marcadores de medicao (pontos + linha) ---
         if self.measure_active || self.measure_point_b.is_some() {
             let cam_u = self.camera.build_uniform(

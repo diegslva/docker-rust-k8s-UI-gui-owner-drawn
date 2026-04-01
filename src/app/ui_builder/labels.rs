@@ -488,48 +488,92 @@ impl App {
             always.push(sl);
         }
 
-        // --- Medicao: distancia entre dois pontos ---
-        if let (Some(a), Some(b)) = (&self.measure_point_a, &self.measure_point_b) {
-            let scale = self.volume.as_ref().map_or(181.28_f32, |v| v.scale as f32);
-            let up = self
-                .volume
-                .as_ref()
-                .map_or(2.0_f32, |v| v.upsample_factor as f32);
-            let dist = crate::app::projection::distance_mm(a.world_pos, b.world_pos, scale, up);
-            let text = format!("{:.1} mm", dist);
-
-            // Projetar no meio da linha A-B em 2D
-            let mid_3d = (a.world_pos + b.world_pos) * 0.5;
-            let cam_u = self.camera.build_uniform(w as u32, h as u32);
-            if let Some((sx, sy)) =
-                crate::app::projection::project_to_screen(mid_3d, &cam_u.mvp, w, h)
-            {
-                let mut lbl = Label::new_bold(fs, &text, 14.0, Color::rgb(255, 255, 255), 0.0, 0.0);
-                lbl.x = sx - lbl.measured_width() / 2.0;
-                lbl.y = sy - 20.0;
-                always.push(lbl);
-            }
-
-            // Distancia sempre visivel: grande, centralizado, acima da legenda
-            let full_text = format!("Distancia: {:.1} mm", dist);
-            let mut backup =
-                Label::new_bold(fs, &full_text, 18.0, Color::rgb(255, 230, 140), 0.0, 0.0);
-            backup.x = (w - backup.measured_width()) / 2.0;
-            backup.y = h * 0.88;
-            always.push(backup);
-        }
-
-        // --- Indicador de modo medicao ---
+        // --- Callout de medicao (estilo fixo, igual ET/SNFH/NETC) ---
         if self.measure_active {
-            let msg = if self.measure_point_a.is_some() && self.measure_point_b.is_none() {
-                "M  Medicao: clique no ponto B"
+            let measure_col = Color::rgb(255, 200, 100);
+            if let (Some(a), Some(b)) = (&self.measure_point_a, &self.measure_point_b) {
+                let scale = self.volume.as_ref().map_or(181.28_f32, |v| v.scale as f32);
+                let up = self
+                    .volume
+                    .as_ref()
+                    .map_or(2.0_f32, |v| v.upsample_factor as f32);
+                let dist = crate::app::projection::distance_mm(a.world_pos, b.world_pos, scale, up);
+                let dist_text = format!("{:.1} mm", dist);
+
+                // Callout fixo: canto superior direito, abaixo do SNFH
+                let cx = w - 260.0;
+                let cy = h * 0.38;
+
+                always.push(Label::new_bold(
+                    fs,
+                    "\u{25CF}  Medicao",
+                    10.5,
+                    measure_col,
+                    cx + 12.0,
+                    cy + 8.0,
+                ));
+                always.push(Label::new_bold(
+                    fs,
+                    &dist_text,
+                    16.0,
+                    Color::rgb(255, 255, 255),
+                    cx + 12.0,
+                    cy + 26.0,
+                ));
+                always.push(Label::new(
+                    fs,
+                    "Distancia entre pontos marcados",
+                    8.8,
+                    col_dim(),
+                    cx + 12.0,
+                    cy + 50.0,
+                ));
+                always.push(Label::new(
+                    fs,
+                    "Clique para mover B  \u{00B7}  M para limpar",
+                    8.0,
+                    col_section(),
+                    cx + 12.0,
+                    cy + 64.0,
+                ));
+
+                // Label projetado no 3D (branco na linha A-B)
+                let mid_3d = (a.world_pos + b.world_pos) * 0.5;
+                let cam_u = self.camera.build_uniform(w as u32, h as u32);
+                if let Some((sx, sy)) =
+                    crate::app::projection::project_to_screen(mid_3d, &cam_u.mvp, w, h)
+                {
+                    let mut lbl =
+                        Label::new_bold(fs, &dist_text, 13.0, Color::rgb(255, 255, 255), 0.0, 0.0);
+                    lbl.x = sx - lbl.measured_width() / 2.0;
+                    lbl.y = sy - 18.0;
+                    always.push(lbl);
+                }
+            } else if self.measure_point_a.is_some() {
+                let mut ml = Label::new(
+                    fs,
+                    "Clique no segundo ponto para medir",
+                    11.0,
+                    measure_col,
+                    0.0,
+                    0.0,
+                );
+                ml.x = (w - ml.measured_width()) / 2.0;
+                ml.y = h * 0.88;
+                always.push(ml);
             } else {
-                "M  Medicao ativa"
-            };
-            let mut ml = Label::new(fs, msg, 10.0, Color::rgb(255, 200, 100), 0.0, 0.0);
-            ml.x = 24.0;
-            ml.y = h - 40.0;
-            always.push(ml);
+                let mut ml = Label::new(
+                    fs,
+                    "Clique em um ponto para iniciar a medicao",
+                    11.0,
+                    measure_col,
+                    0.0,
+                    0.0,
+                );
+                ml.x = (w - ml.measured_width()) / 2.0;
+                ml.y = h * 0.88;
+                always.push(ml);
+            }
         }
 
         // --- Help overlay (H) com fade-in/out ---
