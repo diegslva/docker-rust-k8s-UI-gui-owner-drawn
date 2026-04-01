@@ -18,6 +18,7 @@ impl App {
         match event {
             WindowEvent::CloseRequested => {
                 info!("close");
+                self.save_config();
                 event_loop.exit();
             }
 

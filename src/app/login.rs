@@ -153,8 +153,17 @@ impl LoginScreen {
         // V2: verificar hash bcrypt no SQLite
         self.authenticated = true;
         self.error_message = None;
-        tracing::info!(user = %user, "login bem-sucedido");
+        tracing::info!(user = %user, remember = self.remember_checkbox.checked, "login bem-sucedido");
         true
+    }
+
+    /// Retorna o usuario para salvar no config (se "Lembrar-me" marcado).
+    pub fn remembered_user(&self) -> Option<String> {
+        if self.remember_checkbox.checked && !self.username_input.text.is_empty() {
+            Some(self.username_input.text.clone())
+        } else {
+            None
+        }
     }
 
     /// Renderiza primitivas (fundos dos widgets + fundo da tela).

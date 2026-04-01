@@ -170,6 +170,8 @@ impl BrainViewMode {
 pub(crate) struct App {
     pub(crate) window: Option<Arc<Window>>,
     pub(crate) gpu: Option<GpuState>,
+    /// Configuracoes persistidas (carregadas no startup, salvas ao fechar).
+    pub(crate) config: crate::config::AppConfig,
     /// Índices 0..TUMOR_COUNT = tumores do caso atual; o resto = cérebro permanente
     pub(crate) meshes: Vec<LoadedMesh>,
     pub(crate) camera: OrbitalCamera,
@@ -253,19 +255,41 @@ pub(crate) struct App {
 
 impl App {
     pub(crate) fn new() -> Self {
+        let config = crate::config::AppConfig::load();
+
+        // Aplicar preferencias do config
+        let brain_view = match config.brain_view.as_str() {
+            "tumors_only" => BrainViewMode::TumorsOnly,
+            "opaque" => BrainViewMode::Opaque,
+            _ => BrainViewMode::Transparent,
+        };
+        let show_login = config.remembered_user.is_none();
+        let cam_dist = config.camera_distance;
+        let show_panel = config.show_panel;
+        let show_gimbal = config.show_gimbal;
+        let last_case = config.last_case_index;
+        let slice_visible = config.slice_visible;
+        let slice_pos = config.slice_position;
+        let slice_plane = match config.slice_plane.as_str() {
+            "coronal" => crate::volume::SlicePlane::Coronal,
+            "sagittal" => crate::volume::SlicePlane::Sagittal,
+            _ => crate::volume::SlicePlane::Axial,
+        };
+
         Self {
             window: None,
             gpu: None,
+            config,
             meshes: Vec::new(),
-            camera: OrbitalCamera::new(4.0),
+            camera: OrbitalCamera::new(cam_dist),
             centroids: [glam::Vec3::ZERO; TUMOR_COUNT],
             labels_always: Vec::new(),
             labels_panel: Vec::new(),
             labels_snfh: Vec::new(),
             labels_menu_bar: Vec::new(),
             labels_menu: Vec::new(),
-            show_panel: false,
-            brain_view: BrainViewMode::Transparent,
+            show_panel,
+            brain_view,
             menu_open: -1,
             menu_hover_top: -1,
             menu_hover_item: -1,
@@ -276,9 +300,9 @@ impl App {
             splash_fade: 0.0,
             splash_rx: None,
             splash_labels: Vec::new(),
-            show_login: true,
-            login_screen: None, // criado apos saber o tamanho da janela
-            show_home: false,   // home so aparece apos login
+            show_login,
+            login_screen: None,
+            show_home: !show_login, // se pula login, vai direto pra home
             home_labels: Vec::new(),
             home_anim_t: 0.0,
             python_env_error: None,
@@ -288,7 +312,7 @@ impl App {
             infer_progress: None,
             infer_labels: Vec::new(),
             infer_fade: 0.0,
-            current_case: 0,
+            current_case: last_case,
             transition_phase: 0.0,
             transition_target: 0,
             loading_rx: None,
@@ -299,9 +323,9 @@ impl App {
             last_frame: Instant::now(),
             mouse_pressed: false,
             mouse_pos: None,
-            slice_visible: false,
-            slice_plane: crate::volume::SlicePlane::Axial,
-            slice_position: 0.5,
+            slice_visible,
+            slice_plane,
+            slice_position: slice_pos,
             shift_held: false,
             volume: None,
             measure_active: false,
@@ -311,7 +335,7 @@ impl App {
             tooltip_timer: 0.0,
             show_help: false,
             help_anim_t: 0.0,
-            show_gimbal: false,
+            show_gimbal,
             labels_dirty: false,
         }
     }
@@ -405,6 +429,29 @@ pub(crate) fn load_tumor_meshes_bg(
 }
 
 impl App {
+    /// Salva configuracoes atuais em disco (chamado ao fechar o app).
+    pub(crate) fn save_config(&mut self) {
+        self.config.show_panel = self.show_panel;
+        self.config.show_gimbal = self.show_gimbal;
+        self.config.brain_view = match self.brain_view {
+            BrainViewMode::Transparent => "transparent",
+            BrainViewMode::TumorsOnly => "tumors_only",
+            BrainViewMode::Opaque => "opaque",
+        }
+        .to_string();
+        self.config.slice_visible = self.slice_visible;
+        self.config.slice_plane = match self.slice_plane {
+            crate::volume::SlicePlane::Axial => "axial",
+            crate::volume::SlicePlane::Coronal => "coronal",
+            crate::volume::SlicePlane::Sagittal => "sagittal",
+        }
+        .to_string();
+        self.config.slice_position = self.slice_position;
+        self.config.camera_distance = self.camera.distance;
+        self.config.last_case_index = self.current_case;
+        self.config.save();
+    }
+
     /// Inicia a transição animada para o caso no índice `target`.
     /// O carregamento das meshes acontece em thread de fundo — sem travar o render loop.
     pub(crate) fn navigate_case(&mut self, dir: i32) {

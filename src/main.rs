@@ -1,5 +1,6 @@
 mod app;
 mod camera;
+pub mod config;
 mod embedded;
 mod mesh;
 mod python_env;

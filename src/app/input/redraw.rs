@@ -156,6 +156,11 @@ impl App {
                 .as_ref()
                 .map_or(false, |l| l.authenticated);
             if authenticated {
+                // Salvar "Lembrar-me" no config
+                let remembered = self.login_screen.as_ref().and_then(|l| l.remembered_user());
+                self.config.remembered_user = remembered;
+                self.config.save();
+
                 self.show_login = false;
                 self.show_home = true;
                 info!("login concluido — mostrando home screen");
