@@ -6,6 +6,7 @@ mod python_env;
 mod renderer;
 mod ui;
 mod volume;
+mod widgets;
 
 use anyhow::Result;
 use tracing_subscriber::{EnvFilter, fmt};
