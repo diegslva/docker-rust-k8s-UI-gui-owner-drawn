@@ -63,6 +63,7 @@ impl App {
                                 };
                                 self.tooltip_text = Some(msg.to_string());
                                 self.tooltip_timer = 2.5;
+                                self.labels_dirty = true;
                                 tracing::info!(active = self.measure_active, "toggle medicao");
                             }
                             // Gimbal de orientacao
@@ -75,10 +76,12 @@ impl App {
                                 };
                                 self.tooltip_text = Some(msg.to_string());
                                 self.tooltip_timer = 2.0;
+                                self.labels_dirty = true;
                             }
                             // Help overlay
                             "h" | "H" => {
                                 self.show_help = !self.show_help;
+                                self.labels_dirty = true;
                             }
                             // MRI Slice Plane controls
                             "4" => {
@@ -90,6 +93,7 @@ impl App {
                                 };
                                 self.tooltip_text = Some(msg.to_string());
                                 self.tooltip_timer = 2.5;
+                                self.labels_dirty = true;
                                 tracing::info!(visible = self.slice_visible, "toggle slice plane");
                             }
                             "1" => {
@@ -130,6 +134,7 @@ impl App {
                             };
                             self.tooltip_text = Some(msg.to_string());
                             self.tooltip_timer = 2.0;
+                            self.labels_dirty = true;
                             tracing::info!(mode = ?self.brain_view, "F2: toggle cerebro");
                         }
                         Key::Named(NamedKey::F3) => {
@@ -144,6 +149,7 @@ impl App {
                             };
                             self.tooltip_text = Some(msg.to_string());
                             self.tooltip_timer = 2.0;
+                            self.labels_dirty = true;
                             tracing::info!(mode = ?self.brain_view, "F3: modo cerebro realista");
                         }
                         Key::Named(NamedKey::F11) => {
@@ -344,6 +350,7 @@ impl App {
                                 self.measure_point_b = Some(pt);
                             }
                         }
+                        self.labels_dirty = true;
                         return; // Nao inicia drag de camera
                     }
 

@@ -244,6 +244,8 @@ pub(crate) struct App {
     pub(crate) help_anim_t: f32, // 0.0=fechado, 1.0=aberto
     // Gimbal de orientacao (G)
     pub(crate) show_gimbal: bool,
+    /// Flag para forcar rebuild de labels no proximo frame.
+    pub(crate) labels_dirty: bool,
 }
 
 impl App {
@@ -305,6 +307,7 @@ impl App {
             show_help: false,
             help_anim_t: 0.0,
             show_gimbal: false,
+            labels_dirty: false,
         }
     }
 }

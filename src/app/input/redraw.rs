@@ -24,6 +24,7 @@ impl App {
             self.tooltip_timer -= dt;
             if self.tooltip_timer <= 0.0 {
                 self.tooltip_text = None;
+                self.labels_dirty = true;
             }
         }
         // Help overlay fade animation
@@ -32,6 +33,10 @@ impl App {
             self.help_anim_t = (self.help_anim_t + dt * help_speed).min(1.0);
         } else {
             self.help_anim_t = (self.help_anim_t - dt * help_speed).max(0.0);
+        }
+        // Help fade requer rebuild de labels (alpha dos textos muda)
+        if self.help_anim_t > 0.01 && self.help_anim_t < 0.99 {
+            self.labels_dirty = true;
         }
 
         // ─────────────────────────────────────────────────────────────
@@ -513,12 +518,13 @@ impl App {
             self.update_snfh_label_positions(size);
         }
 
-        // Reconstruir labels a cada frame — necessario para callouts dinamicos
-        // (medicao, gimbal N/S, tooltips, slice callout). Custo minimo.
-        self.build_labels(size);
-        if rebuild_needed {
+        if rebuild_needed || self.labels_dirty {
+            self.build_labels(size);
             self.update_snfh_label_positions(size);
-            self.rebuild_menu_labels(size);
+            if rebuild_needed {
+                self.rebuild_menu_labels(size);
+            }
+            self.labels_dirty = false;
         }
 
         let cam = self.camera.build_uniform(size.width, size.height);
