@@ -513,8 +513,10 @@ impl App {
             self.update_snfh_label_positions(size);
         }
 
+        // Reconstruir labels a cada frame — necessario para callouts dinamicos
+        // (medicao, gimbal N/S, tooltips, slice callout). Custo minimo.
+        self.build_labels(size);
         if rebuild_needed {
-            self.build_labels(size);
             self.update_snfh_label_positions(size);
             self.rebuild_menu_labels(size);
         }
