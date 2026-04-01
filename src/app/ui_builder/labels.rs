@@ -518,9 +518,16 @@ impl App {
             }
         }
 
-        // --- Callout de medicao (estilo fixo, igual ET/SNFH/NETC) ---
+        // --- Callout de medicao (MESMO padrao que ET/SNFH/NETC) ---
         if self.measure_active {
             let measure_col = Color::rgb(255, 200, 100);
+            let col_micro = Color::rgb(148, 164, 182);
+
+            // Posicao: mesma logica que SNFH (canto direito), mas uma box abaixo
+            let bh = 92.0_f32;
+            let mx = w - box_w - 24.0;
+            let my = y_ct + bh + 12.0 + bh + 12.0;
+
             if let (Some(a), Some(b)) = (&self.measure_point_a, &self.measure_point_b) {
                 let scale = self.volume.as_ref().map_or(181.28_f32, |v| v.scale as f32);
                 let up = self
@@ -528,43 +535,35 @@ impl App {
                     .as_ref()
                     .map_or(2.0_f32, |v| v.upsample_factor as f32);
                 let dist = crate::app::projection::distance_mm(a.world_pos, b.world_pos, scale, up);
-                let dist_text = format!("{:.1} mm", dist);
+                let dist_text = format!("{:.1} mL", dist);
+                let vol_str = format!("{:.1} mm", dist);
 
-                // Callout fixo: centro-direito da tela
-                let cx = (w * 0.72).min(w - 270.0);
-                let cy = h * 0.50;
-
-                always.push(Label::new_bold(
-                    fs,
-                    "\u{25CF}  Medicao",
-                    10.5,
-                    measure_col,
-                    cx + 12.0,
-                    cy + 8.0,
-                ));
-                always.push(Label::new_bold(
-                    fs,
-                    &dist_text,
-                    16.0,
-                    Color::rgb(255, 255, 255),
-                    cx + 12.0,
-                    cy + 26.0,
-                ));
+                // Titulo (mesmo y + 20 que ET)
                 always.push(Label::new(
                     fs,
-                    "Distancia entre pontos marcados",
-                    8.8,
-                    col_dim(),
-                    cx + 12.0,
-                    cy + 50.0,
+                    "\u{25CF}  Medicao  \u{00B7}  Distancia",
+                    10.5,
+                    measure_col,
+                    mx + pad,
+                    my + 20.0,
                 ));
+                // Valor grande (mesmo y + 38 que ET)
+                always.push(Label::new_bold(
+                    fs,
+                    &vol_str,
+                    13.0,
+                    Color::WHITE,
+                    mx + pad,
+                    my + 38.0,
+                ));
+                // Descricao (mesmo y + 62 que ET)
                 always.push(Label::new(
                     fs,
                     "Clique para mover B  \u{00B7}  M para limpar",
-                    8.0,
-                    col_section(),
-                    cx + 12.0,
-                    cy + 64.0,
+                    8.8,
+                    col_micro,
+                    mx + pad,
+                    my + 62.0,
                 ));
 
                 // Label projetado no 3D (branco na linha A-B)
@@ -574,35 +573,45 @@ impl App {
                     crate::app::projection::project_to_screen(mid_3d, &cam_u.mvp, w, h)
                 {
                     let mut lbl =
-                        Label::new_bold(fs, &dist_text, 13.0, Color::rgb(255, 255, 255), 0.0, 0.0);
+                        Label::new_bold(fs, &vol_str, 13.0, Color::rgb(255, 255, 255), 0.0, 0.0);
                     lbl.x = sx - lbl.measured_width() / 2.0;
                     lbl.y = sy - 18.0;
                     always.push(lbl);
                 }
             } else if self.measure_point_a.is_some() {
-                let mut ml = Label::new(
+                always.push(Label::new(
                     fs,
-                    "Clique no segundo ponto para medir",
-                    11.0,
+                    "\u{25CF}  Medicao",
+                    10.5,
                     measure_col,
-                    0.0,
-                    0.0,
-                );
-                ml.x = (w - ml.measured_width()) / 2.0;
-                ml.y = h * 0.88;
-                always.push(ml);
+                    mx + pad,
+                    my + 20.0,
+                ));
+                always.push(Label::new(
+                    fs,
+                    "Clique no segundo ponto",
+                    10.0,
+                    col_micro,
+                    mx + pad,
+                    my + 40.0,
+                ));
             } else {
-                let mut ml = Label::new(
+                always.push(Label::new(
                     fs,
-                    "Clique em um ponto para iniciar a medicao",
-                    11.0,
+                    "\u{25CF}  Medicao",
+                    10.5,
                     measure_col,
-                    0.0,
-                    0.0,
-                );
-                ml.x = (w - ml.measured_width()) / 2.0;
-                ml.y = h * 0.88;
-                always.push(ml);
+                    mx + pad,
+                    my + 20.0,
+                ));
+                always.push(Label::new(
+                    fs,
+                    "Clique no primeiro ponto",
+                    10.0,
+                    col_micro,
+                    mx + pad,
+                    my + 40.0,
+                ));
             }
         }
 

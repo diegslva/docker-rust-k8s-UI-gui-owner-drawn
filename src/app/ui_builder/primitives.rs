@@ -464,18 +464,14 @@ impl App {
             }
         }
 
-        // --- Callout box de medicao (fundo + borda dourada) ---
+        // --- Callout box de medicao (mesmo padrao ET/SNFH/NETC) ---
         if self.measure_active && self.measure_point_a.is_some() && self.measure_point_b.is_some() {
-            let cx = (w * 0.72).min(w - 270.0);
-            let cy = h * 0.50;
-            let bw = 240.0;
-            let bh = 82.0;
-            // Fundo
-            b.rect(cx, cy, bw, bh, BG_SURFACE, w, h);
-            // Overlay sutil
-            b.rect(cx, cy, bw, bh, [0.25, 0.20, 0.10, 0.08], w, h);
-            // Borda superior dourada
-            b.rect(cx, cy, bw, 2.0, [1.0, 0.78, 0.30, 0.90], w, h);
+            let mx = w - box_w - 24.0; // mesma posicao X que SNFH
+            let my = y_ct + box_h + 12.0 + box_h + 12.0; // abaixo do SNFH
+            let measure_border = [1.0, 0.78, 0.30, 1.0]; // dourado
+            b.rect(mx, my, box_w, box_h, bg, w, h);
+            b.rect(mx, my + 2.0, box_w, box_h - 2.0, inner_ov, w, h);
+            b.rect(mx, my, box_w, 2.0, measure_border, w, h);
         }
 
         // --- Marcadores de medicao (pontos + linha) ---
