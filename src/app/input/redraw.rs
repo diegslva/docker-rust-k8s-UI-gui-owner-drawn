@@ -26,6 +26,13 @@ impl App {
                 self.tooltip_text = None;
             }
         }
+        // Help overlay fade animation
+        let help_speed = 4.0; // 0→1 em 0.25s
+        if self.show_help {
+            self.help_anim_t = (self.help_anim_t + dt * help_speed).min(1.0);
+        } else {
+            self.help_anim_t = (self.help_anim_t - dt * help_speed).max(0.0);
+        }
 
         // ─────────────────────────────────────────────────────────────
         // SPLASH SCREEN — exibida enquanto os meshes carregam em fundo

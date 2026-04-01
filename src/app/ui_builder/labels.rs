@@ -479,7 +479,7 @@ impl App {
             );
             let mut sl = Label::new(fs, &slice_text, 10.0, col_subtitle(), 0.0, 0.0);
             sl.x = (w - sl.measured_width()) / 2.0;
-            sl.y = MENU_BAR_H + 52.0;
+            sl.y = MENU_BAR_H + 72.0;
             always.push(sl);
         }
 
@@ -492,7 +492,8 @@ impl App {
                 .map_or(2.0_f32, |v| v.upsample_factor as f32);
             let dist = crate::app::projection::distance_mm(a.world_pos, b.world_pos, scale, up);
             let text = format!("{:.1} mm", dist);
-            // Posicionar no meio da linha entre A e B (projetado em 2D)
+
+            // Projetar no meio da linha A-B em 2D
             let mid_3d = (a.world_pos + b.world_pos) * 0.5;
             let cam_u = self.camera.build_uniform(w as u32, h as u32);
             if let Some((sx, sy)) =
@@ -503,6 +504,14 @@ impl App {
                 lbl.y = sy - 20.0;
                 always.push(lbl);
             }
+
+            // Backup: sempre mostrar distancia no canto inferior centralizado
+            let full_text = format!("Distancia: {:.1} mm", dist);
+            let mut backup =
+                Label::new_bold(fs, &full_text, 13.0, Color::rgb(255, 220, 130), 0.0, 0.0);
+            backup.x = (w - backup.measured_width()) / 2.0;
+            backup.y = h - 75.0;
+            always.push(backup);
         }
 
         // --- Indicador de modo medicao ---
@@ -518,8 +527,9 @@ impl App {
             always.push(ml);
         }
 
-        // --- Help overlay (H) ---
-        if self.show_help {
+        // --- Help overlay (H) com fade-in/out ---
+        if self.help_anim_t > 0.01 {
+            let ha = self.help_anim_t;
             let help_items = [
                 ("H", "Mostrar/ocultar esta ajuda"),
                 ("I", "Painel clinico (dados volumetricos)"),
@@ -538,8 +548,15 @@ impl App {
             let box_x = (w - box_w) / 2.0;
             let mut hy = h * 0.18;
 
-            let mut title =
-                Label::new_bold(fs, "Atalhos do NeuroScan", 14.0, col_header(), 0.0, 0.0);
+            let alpha_u8 = (ha * 255.0) as u8;
+            let mut title = Label::new_bold(
+                fs,
+                "Atalhos do NeuroScan",
+                14.0,
+                Color::rgba(200, 222, 245, alpha_u8),
+                0.0,
+                0.0,
+            );
             title.x = (w - title.measured_width()) / 2.0;
             title.y = hy;
             always.push(title);
@@ -547,9 +564,23 @@ impl App {
 
             for (key, desc) in &help_items {
                 let key_text = format!("  {}  ", key);
-                let kl = Label::new_bold(fs, &key_text, 11.0, Color::rgb(120, 180, 240), box_x, hy);
+                let kl = Label::new_bold(
+                    fs,
+                    &key_text,
+                    11.0,
+                    Color::rgba(120, 180, 240, alpha_u8),
+                    box_x,
+                    hy,
+                );
                 always.push(kl);
-                let dl = Label::new(fs, desc, 11.0, col_value(), box_x + 120.0, hy);
+                let dl = Label::new(
+                    fs,
+                    desc,
+                    11.0,
+                    Color::rgba(160, 192, 220, alpha_u8),
+                    box_x + 120.0,
+                    hy,
+                );
                 always.push(dl);
                 hy += 22.0;
             }
