@@ -72,7 +72,8 @@ impl App {
                 let label_refs: Vec<&Label> = self.splash_labels.iter().collect();
                 if let Some(gpu) = &mut self.gpu {
                     let empty_overlay = Prim2DBatch::new();
-                    if let Err(e) = gpu.render(&cam, &[], &label_refs, &prims, &empty_overlay, &[])
+                    if let Err(e) =
+                        gpu.render(&cam, &[], &label_refs, &prims, &empty_overlay, &[], false)
                     {
                         warn!(error = %e, "erro render splash");
                     }
@@ -92,7 +93,8 @@ impl App {
                 let label_refs: Vec<&Label> = self.splash_labels.iter().collect();
                 if let Some(gpu) = &mut self.gpu {
                     let empty_overlay = Prim2DBatch::new();
-                    if let Err(e) = gpu.render(&cam, &[], &label_refs, &prims, &empty_overlay, &[])
+                    if let Err(e) =
+                        gpu.render(&cam, &[], &label_refs, &prims, &empty_overlay, &[], false)
                     {
                         warn!(error = %e, "erro render fade-out splash");
                     }
@@ -221,6 +223,22 @@ impl App {
                 self.build_labels(sz);
                 self.update_snfh_label_positions(sz);
                 self.rebuild_menu_labels(sz);
+                // Carregar volume MRI para slice viewer (se .npy existe)
+                let vol_path = format!("{}/volume_flair.npy", out_dir);
+                let meta_path = "assets/models/brain_meta.json";
+                match crate::volume::VolumeData::load(&vol_path, meta_path) {
+                    Ok(vol) => {
+                        if let Some(gpu) = &mut self.gpu {
+                            gpu.upload_volume(&vol);
+                        }
+                        self.volume = Some(vol);
+                        info!("volume MRI carregado para slice viewer");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "volume .npy nao disponivel (slice viewer desabilitado)");
+                    }
+                }
+
                 // Inicia fade suave — infer_active permanece true durante o fade
                 self.infer_fade = 0.01;
                 info!("caso inferido carregado — iniciando fade para 3D");
@@ -320,6 +338,7 @@ impl App {
                                 })
                             })
                             .collect();
+                        let sa = self.slice_visible && self.volume.is_some();
                         if let Err(e) = gpu.render(
                             &cam,
                             &entries,
@@ -327,6 +346,7 @@ impl App {
                             &prims,
                             &overlay_prims,
                             &overlay_label_refs,
+                            sa,
                         ) {
                             warn!(error = %e, "erro render fade inferencia->3D");
                         }
@@ -348,7 +368,8 @@ impl App {
                 let label_refs: Vec<&Label> = self.infer_labels.iter().collect();
                 if let Some(gpu) = &mut self.gpu {
                     let empty_overlay = Prim2DBatch::new();
-                    if let Err(e) = gpu.render(&cam, &[], &label_refs, &prims, &empty_overlay, &[])
+                    if let Err(e) =
+                        gpu.render(&cam, &[], &label_refs, &prims, &empty_overlay, &[], false)
                     {
                         warn!(error = %e, "erro render tela inferencia");
                     }
@@ -387,6 +408,7 @@ impl App {
                     &prims,
                     &overlay_prims,
                     &overlay_label_refs,
+                    false,
                 ) {
                     warn!(error = %e, "erro render home screen");
                 }
@@ -538,6 +560,34 @@ impl App {
                     })
                 })
                 .collect();
+            // MRI Slice Plane: gerar quad e atualizar buffers se ativo
+            let slice_active = self.slice_visible && self.volume.is_some();
+            if slice_active {
+                if let Some(vol) = &self.volume {
+                    let (wmin, wmax) = vol.world_bounds();
+                    let (verts, idxs) = crate::mesh::generate_slice_quad(
+                        self.slice_plane,
+                        self.slice_position,
+                        wmin,
+                        wmax,
+                    );
+                    gpu.queue
+                        .write_buffer(&gpu.slice_quad_vb, 0, bytemuck::cast_slice(&verts));
+                    gpu.queue
+                        .write_buffer(&gpu.slice_quad_ib, 0, bytemuck::cast_slice(&idxs));
+                    let params = crate::renderer::SliceParams {
+                        world_min: wmin.to_array(),
+                        _pad0: 0.0,
+                        world_max: wmax.to_array(),
+                        alpha: 0.85,
+                    };
+                    gpu.queue.write_buffer(
+                        &gpu.slice_params_buffer,
+                        0,
+                        bytemuck::cast_slice(&[params]),
+                    );
+                }
+            }
             if let Err(e) = gpu.render(
                 &cam,
                 &entries,
@@ -545,6 +595,7 @@ impl App {
                 &prims,
                 &overlay_prims,
                 &overlay_label_refs,
+                slice_active,
             ) {
                 warn!(error = %e, "erro no render");
             }

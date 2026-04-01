@@ -101,9 +101,15 @@ impl ApplicationHandler for App {
             let label_refs: Vec<&Label> = self.splash_labels.iter().collect();
             if let Some(gpu) = &mut self.gpu {
                 let empty_overlay = Prim2DBatch::new();
-                if let Err(e) =
-                    gpu.render(&cam, &[], &label_refs, &first_prims, &empty_overlay, &[])
-                {
+                if let Err(e) = gpu.render(
+                    &cam,
+                    &[],
+                    &label_refs,
+                    &first_prims,
+                    &empty_overlay,
+                    &[],
+                    false,
+                ) {
                     warn!(error = %e, "erro no frame inicial da splash");
                 }
             }
