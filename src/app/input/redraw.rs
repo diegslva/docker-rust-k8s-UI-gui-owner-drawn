@@ -117,6 +117,56 @@ impl App {
             return;
         }
 
+        // ─────────────────────────────────────────────────────────────
+        // TELA DE LOGIN — aparece apos splash, antes de qualquer outra tela
+        // ─────────────────────────────────────────────────────────────
+        if self.show_login {
+            let sz = self
+                .window
+                .as_ref()
+                .map(|w| w.inner_size())
+                .unwrap_or(winit::dpi::PhysicalSize::new(1280, 720));
+            let sw = sz.width as f32;
+            let sh = sz.height as f32;
+
+            // Criar login screen se ainda nao existe
+            if self.login_screen.is_none() {
+                self.login_screen = Some(crate::app::login::LoginScreen::new(sw, sh));
+            }
+
+            if let Some(login) = &mut self.login_screen {
+                login.update(dt);
+
+                let prims = login.render_prims(sw, sh);
+                let cam = self.camera.build_uniform(sz.width, sz.height);
+
+                if let Some(gpu) = &mut self.gpu {
+                    let labels = login.render_labels(gpu.font_system_mut(), sw, sh);
+                    let label_refs: Vec<&Label> = labels.iter().collect();
+                    let empty = Prim2DBatch::new();
+                    if let Err(e) = gpu.render(&cam, &[], &label_refs, &prims, &empty, &[], false) {
+                        warn!(error = %e, "erro render login");
+                    }
+                }
+            }
+
+            // Verificar se login foi bem-sucedido
+            let authenticated = self
+                .login_screen
+                .as_ref()
+                .map_or(false, |l| l.authenticated);
+            if authenticated {
+                self.show_login = false;
+                self.show_home = true;
+                info!("login concluido — mostrando home screen");
+            }
+
+            if let Some(w) = &self.window {
+                w.request_redraw();
+            }
+            return;
+        }
+
         // ── File dialog: checar se usuário selecionou arquivo ──────
         let picked_path: Option<std::path::PathBuf> = if let Some(rx) = &self.dialog_rx {
             match rx.try_recv() {

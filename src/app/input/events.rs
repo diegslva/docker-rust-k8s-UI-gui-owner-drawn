@@ -22,6 +22,30 @@ impl App {
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
+                // Delegar ao login se ativo
+                if self.show_login {
+                    if let Some(login) = &mut self.login_screen {
+                        if event.state == ElementState::Pressed {
+                            // Caracteres digitados
+                            if let Key::Character(ch) = &event.logical_key {
+                                for c in ch.chars() {
+                                    login.handle_char(c);
+                                }
+                            }
+                            // Teclas especiais (Backspace, Tab, Enter, etc.)
+                            let did_login = login.handle_key(&event.logical_key);
+                            if did_login {
+                                self.show_login = false;
+                                self.show_home = true;
+                            }
+                        }
+                    }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                    return;
+                }
+
                 if event.state == ElementState::Pressed {
                     if self.menu_open >= 0 {
                         self.menu_open = -1;
@@ -182,6 +206,25 @@ impl App {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
+                // Delegar ao login se ativo
+                if self.show_login && button == MouseButton::Left {
+                    let (mx, my) = self.mouse_pos.unwrap_or((0.0, 0.0));
+                    let just_released = state == ElementState::Released;
+                    let pressed = state == ElementState::Pressed;
+                    if let Some(login) = &mut self.login_screen {
+                        let did_login =
+                            login.handle_mouse(mx as f32, my as f32, pressed, just_released);
+                        if did_login {
+                            self.show_login = false;
+                            self.show_home = true;
+                        }
+                    }
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                    return;
+                }
+
                 if button == MouseButton::Left && state == ElementState::Pressed {
                     let (mx, my) = self.mouse_pos.unwrap_or((0.0, 0.0));
 
