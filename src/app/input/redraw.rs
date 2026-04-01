@@ -28,7 +28,7 @@ impl App {
             }
         }
         // Help overlay fade animation
-        let help_speed = 4.0; // 0→1 em 0.25s
+        let help_speed = 12.0; // 0→1 em ~0.08s (quase instantaneo)
         if self.show_help {
             self.help_anim_t = (self.help_anim_t + dt * help_speed).min(1.0);
         } else {
