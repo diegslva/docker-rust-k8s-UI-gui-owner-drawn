@@ -53,7 +53,10 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Converter posicao world -> UVW [0,1]^3 para sampling do volume
     let range = params.world_max - params.world_min;
-    let uvw = (in.world_pos - params.world_min) / range;
+    var uvw = (in.world_pos - params.world_min) / range;
+
+    // Correcao de lateralidade: NIfTI usa convencao radiologica (X invertido)
+    uvw.x = 1.0 - uvw.x;
 
     // Clamp para evitar sampling fora do volume
     let uvw_clamped = clamp(uvw, vec3<f32>(0.0), vec3<f32>(1.0));
