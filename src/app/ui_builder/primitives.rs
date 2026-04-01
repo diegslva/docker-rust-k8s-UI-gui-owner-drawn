@@ -405,6 +405,92 @@ impl App {
             }
         }
 
+        // --- Marcadores de medicao (pontos + linha) ---
+        if self.measure_active || self.measure_point_b.is_some() {
+            let cam_u = self.camera.build_uniform(
+                self.gpu.as_ref().map_or(1280, |g| g.config.width),
+                self.gpu.as_ref().map_or(720, |g| g.config.height),
+            );
+            let marker_color = [1.0, 0.35, 0.20, 0.95]; // vermelho-alaranjado
+            let line_color = [1.0, 1.0, 1.0, 0.80]; // branco
+
+            // Ponto A
+            if let Some(a) = &self.measure_point_a {
+                if let Some((ax, ay)) =
+                    crate::app::projection::project_to_screen(a.world_pos, &cam_u.mvp, w, h)
+                {
+                    let r = 5.0;
+                    b.rect(ax - r, ay - r, r * 2.0, r * 2.0, marker_color, w, h);
+                    // Cruz
+                    b.rect(
+                        ax - 1.0,
+                        ay - r - 2.0,
+                        2.0,
+                        r * 2.0 + 4.0,
+                        marker_color,
+                        w,
+                        h,
+                    );
+                    b.rect(
+                        ax - r - 2.0,
+                        ay - 1.0,
+                        r * 2.0 + 4.0,
+                        2.0,
+                        marker_color,
+                        w,
+                        h,
+                    );
+
+                    // Ponto B + linha
+                    if let Some(bp) = &self.measure_point_b {
+                        if let Some((bx, by)) = crate::app::projection::project_to_screen(
+                            bp.world_pos,
+                            &cam_u.mvp,
+                            w,
+                            h,
+                        ) {
+                            // Ponto B
+                            b.rect(bx - r, by - r, r * 2.0, r * 2.0, marker_color, w, h);
+                            b.rect(
+                                bx - 1.0,
+                                by - r - 2.0,
+                                2.0,
+                                r * 2.0 + 4.0,
+                                marker_color,
+                                w,
+                                h,
+                            );
+                            b.rect(
+                                bx - r - 2.0,
+                                by - 1.0,
+                                r * 2.0 + 4.0,
+                                2.0,
+                                marker_color,
+                                w,
+                                h,
+                            );
+                            // Linha A-B
+                            b.line(ax, ay, bx, by, line_color, 2.0, w, h);
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Help overlay background ---
+        if self.show_help {
+            // Fundo semi-transparente
+            b.rect(
+                0.0,
+                0.0,
+                w,
+                h,
+                [BG_DEEP[0], BG_DEEP[1], BG_DEEP[2], 0.88],
+                w,
+                h,
+            );
+        }
+
         b
     }
 

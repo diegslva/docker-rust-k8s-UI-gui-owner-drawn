@@ -453,6 +453,108 @@ impl App {
             py,
         ));
 
+        // --- Tooltip contextual (fade out automatico) ---
+        if let Some(text) = &self.tooltip_text {
+            if self.tooltip_timer > 0.0 {
+                let alpha = (self.tooltip_timer.min(1.0) * 255.0) as u8;
+                let mut tt =
+                    Label::new_bold(fs, text, 12.0, Color::rgba(200, 222, 245, alpha), 0.0, 0.0);
+                tt.x = (w - tt.measured_width()) / 2.0;
+                tt.y = h - 55.0;
+                always.push(tt);
+            }
+        }
+
+        // --- Callout do slice plane ---
+        if self.slice_visible && self.volume.is_some() {
+            let plane_name = match self.slice_plane {
+                crate::volume::SlicePlane::Axial => "Axial",
+                crate::volume::SlicePlane::Coronal => "Coronal",
+                crate::volume::SlicePlane::Sagittal => "Sagital",
+            };
+            let pct = (self.slice_position * 100.0).round() as u32;
+            let slice_text = format!(
+                "Corte {} -- {}%  |  Shift+scroll para mover  |  1/2/3 plano",
+                plane_name, pct
+            );
+            let mut sl = Label::new(fs, &slice_text, 10.0, col_subtitle(), 0.0, 0.0);
+            sl.x = (w - sl.measured_width()) / 2.0;
+            sl.y = MENU_BAR_H + 52.0;
+            always.push(sl);
+        }
+
+        // --- Medicao: distancia entre dois pontos ---
+        if let (Some(a), Some(b)) = (&self.measure_point_a, &self.measure_point_b) {
+            let scale = self.volume.as_ref().map_or(181.28_f32, |v| v.scale as f32);
+            let up = self
+                .volume
+                .as_ref()
+                .map_or(2.0_f32, |v| v.upsample_factor as f32);
+            let dist = crate::app::projection::distance_mm(a.world_pos, b.world_pos, scale, up);
+            let text = format!("{:.1} mm", dist);
+            // Posicionar no meio da linha entre A e B (projetado em 2D)
+            let mid_3d = (a.world_pos + b.world_pos) * 0.5;
+            let cam_u = self.camera.build_uniform(w as u32, h as u32);
+            if let Some((sx, sy)) =
+                crate::app::projection::project_to_screen(mid_3d, &cam_u.mvp, w, h)
+            {
+                let mut lbl = Label::new_bold(fs, &text, 14.0, Color::rgb(255, 255, 255), 0.0, 0.0);
+                lbl.x = sx - lbl.measured_width() / 2.0;
+                lbl.y = sy - 20.0;
+                always.push(lbl);
+            }
+        }
+
+        // --- Indicador de modo medicao ---
+        if self.measure_active {
+            let msg = if self.measure_point_a.is_some() && self.measure_point_b.is_none() {
+                "M  Medicao: clique no ponto B"
+            } else {
+                "M  Medicao ativa"
+            };
+            let mut ml = Label::new(fs, msg, 10.0, Color::rgb(255, 200, 100), 0.0, 0.0);
+            ml.x = 24.0;
+            ml.y = h - 40.0;
+            always.push(ml);
+        }
+
+        // --- Help overlay (H) ---
+        if self.show_help {
+            let help_items = [
+                ("H", "Mostrar/ocultar esta ajuda"),
+                ("I", "Painel clinico (dados volumetricos)"),
+                ("O", "Abrir volume NIfTI"),
+                ("F2", "Cerebro transparente / apenas tumores"),
+                ("F3", "Cerebro opaco (anatomia realista)"),
+                ("F11", "Tela cheia"),
+                ("4", "Corte MRI (plano de ressonancia)"),
+                ("1/2/3", "Plano axial / coronal / sagital"),
+                ("Shift+Scroll", "Mover plano de corte"),
+                ("M", "Medicao (distancia entre dois pontos)"),
+                ("Esc", "Voltar a tela inicial"),
+                ("Setas", "Navegar entre casos clinicos"),
+            ];
+            let box_w = 380.0_f32;
+            let box_x = (w - box_w) / 2.0;
+            let mut hy = h * 0.18;
+
+            let mut title =
+                Label::new_bold(fs, "Atalhos do NeuroScan", 14.0, col_header(), 0.0, 0.0);
+            title.x = (w - title.measured_width()) / 2.0;
+            title.y = hy;
+            always.push(title);
+            hy += 28.0;
+
+            for (key, desc) in &help_items {
+                let key_text = format!("  {}  ", key);
+                let kl = Label::new_bold(fs, &key_text, 11.0, Color::rgb(120, 180, 240), box_x, hy);
+                always.push(kl);
+                let dl = Label::new(fs, desc, 11.0, col_value(), box_x + 120.0, hy);
+                always.push(dl);
+                hy += 22.0;
+            }
+        }
+
         self.labels_always = always;
         self.labels_panel = panel;
         self.labels_snfh = snfh;

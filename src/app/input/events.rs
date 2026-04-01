@@ -49,22 +49,53 @@ impl App {
                                     self.dialog_rx = Some(rx);
                                 }
                             }
+                            // Medicao interativa
+                            "m" | "M" => {
+                                self.measure_active = !self.measure_active;
+                                if !self.measure_active {
+                                    self.measure_point_a = None;
+                                    self.measure_point_b = None;
+                                }
+                                let msg = if self.measure_active {
+                                    "Medicao ativa -- clique em dois pontos"
+                                } else {
+                                    "Medicao desativada"
+                                };
+                                self.tooltip_text = Some(msg.to_string());
+                                self.tooltip_timer = 2.5;
+                                tracing::info!(active = self.measure_active, "toggle medicao");
+                            }
+                            // Help overlay
+                            "h" | "H" => {
+                                self.show_help = !self.show_help;
+                            }
                             // MRI Slice Plane controls
                             "4" => {
                                 self.slice_visible = !self.slice_visible;
+                                let msg = if self.slice_visible {
+                                    "Corte MRI ativo -- Shift+scroll para mover, 1/2/3 para plano"
+                                } else {
+                                    "Corte MRI desativado"
+                                };
+                                self.tooltip_text = Some(msg.to_string());
+                                self.tooltip_timer = 2.5;
                                 tracing::info!(visible = self.slice_visible, "toggle slice plane");
                             }
                             "1" => {
                                 self.slice_plane = crate::volume::SlicePlane::Axial;
-                                tracing::info!("slice plane: axial");
+                                self.tooltip_text = Some("Plano Axial (superior-inferior)".into());
+                                self.tooltip_timer = 2.0;
                             }
                             "2" => {
                                 self.slice_plane = crate::volume::SlicePlane::Coronal;
-                                tracing::info!("slice plane: coronal");
+                                self.tooltip_text =
+                                    Some("Plano Coronal (anterior-posterior)".into());
+                                self.tooltip_timer = 2.0;
                             }
                             "3" => {
                                 self.slice_plane = crate::volume::SlicePlane::Sagittal;
-                                tracing::info!("slice plane: sagittal");
+                                self.tooltip_text = Some("Plano Sagital (esquerda-direita)".into());
+                                self.tooltip_timer = 2.0;
                             }
                             "+" | "=" => {
                                 self.slice_position = (self.slice_position + 0.01).min(1.0);
@@ -81,6 +112,13 @@ impl App {
                                 BrainViewMode::TumorsOnly => BrainViewMode::Transparent,
                                 BrainViewMode::Opaque => BrainViewMode::TumorsOnly,
                             };
+                            let msg = match self.brain_view {
+                                BrainViewMode::Transparent => "Cerebro transparente + tumores",
+                                BrainViewMode::TumorsOnly => "Apenas tumores (cerebro oculto)",
+                                BrainViewMode::Opaque => "Cerebro opaco (anatomia realista)",
+                            };
+                            self.tooltip_text = Some(msg.to_string());
+                            self.tooltip_timer = 2.0;
                             tracing::info!(mode = ?self.brain_view, "F2: toggle cerebro");
                         }
                         Key::Named(NamedKey::F3) => {
@@ -89,6 +127,12 @@ impl App {
                                 BrainViewMode::Opaque => BrainViewMode::Transparent,
                                 _ => BrainViewMode::Opaque,
                             };
+                            let msg = match self.brain_view {
+                                BrainViewMode::Opaque => "Cerebro opaco com texturas anatomicas",
+                                _ => "Cerebro transparente",
+                            };
+                            self.tooltip_text = Some(msg.to_string());
+                            self.tooltip_timer = 2.0;
                             tracing::info!(mode = ?self.brain_view, "F3: modo cerebro realista");
                         }
                         Key::Named(NamedKey::F11) => {
@@ -231,10 +275,90 @@ impl App {
                 }
 
                 if button == MouseButton::Left {
-                    let (_, my) = self.mouse_pos.unwrap_or((0.0, 0.0));
+                    let (mx, my) = self.mouse_pos.unwrap_or((0.0, 0.0));
                     let in_menu = self.is_menu_zone(my);
+
+                    // Medicao interativa: clique coloca ponto A ou B
+                    if state == ElementState::Pressed
+                        && self.measure_active
+                        && !in_menu
+                        && !self.show_home
+                        && !self.infer_active
+                    {
+                        let sz = self
+                            .window
+                            .as_ref()
+                            .map(|w| w.inner_size())
+                            .unwrap_or(PhysicalSize::new(1280, 720));
+                        let cam = self.camera.build_uniform(sz.width, sz.height);
+                        let (ray_o, ray_d) = crate::app::projection::screen_to_ray(
+                            mx as f32,
+                            my as f32,
+                            sz.width as f32,
+                            sz.height as f32,
+                            &cam.mvp,
+                        );
+                        // Hit test: testa interseccao com esferas dos centroids dos tumores
+                        let mut best_t = f32::MAX;
+                        let mut best_hit = None;
+                        for centroid in &self.centroids {
+                            if let Some(t) = crate::app::projection::ray_sphere_intersect(
+                                ray_o, ray_d, *centroid, 0.3,
+                            ) {
+                                if t < best_t {
+                                    best_t = t;
+                                    best_hit = Some(ray_o + ray_d * t);
+                                }
+                            }
+                        }
+                        // Se nao acertou tumor, usa ponto no plano do slice (se ativo)
+                        if best_hit.is_none() {
+                            // Coloca ponto na profundidade do centro da cena
+                            let t_center = -ray_o.dot(ray_d.normalize());
+                            if t_center > 0.0 {
+                                best_hit = Some(ray_o + ray_d * t_center.max(0.1));
+                            }
+                        }
+                        if let Some(hit) = best_hit {
+                            let pt = crate::app::projection::MeasurePoint { world_pos: hit };
+                            if self.measure_point_a.is_none() {
+                                self.measure_point_a = Some(pt);
+                                self.tooltip_text =
+                                    Some("Ponto A marcado -- clique no ponto B".into());
+                                self.tooltip_timer = 2.0;
+                            } else if self.measure_point_b.is_none() {
+                                self.measure_point_b = Some(pt);
+                                // Calcular distancia
+                                if let Some(a) = &self.measure_point_a {
+                                    let scale =
+                                        self.volume.as_ref().map_or(181.28, |v| v.scale as f32);
+                                    let up = self
+                                        .volume
+                                        .as_ref()
+                                        .map_or(2.0, |v| v.upsample_factor as f32);
+                                    let dist = crate::app::projection::distance_mm(
+                                        a.world_pos,
+                                        pt.world_pos,
+                                        scale,
+                                        up,
+                                    );
+                                    self.tooltip_text = Some(format!("Distancia: {:.1} mm", dist));
+                                    self.tooltip_timer = 5.0;
+                                }
+                            } else {
+                                // Reset: novo par de pontos
+                                self.measure_point_a = Some(pt);
+                                self.measure_point_b = None;
+                                self.tooltip_text =
+                                    Some("Ponto A marcado -- clique no ponto B".into());
+                                self.tooltip_timer = 2.0;
+                            }
+                        }
+                        return; // Nao inicia drag de camera
+                    }
+
                     if state == ElementState::Pressed && in_menu {
-                        // Click na menu bar / dropdown — não inicia drag de câmera
+                        // Click na menu bar / dropdown — nao inicia drag de camera
                     } else {
                         self.mouse_pressed = state == ElementState::Pressed;
                         self.last_interaction = std::time::Instant::now();

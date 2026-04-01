@@ -232,6 +232,15 @@ pub(crate) struct App {
     pub(crate) shift_held: bool,
     /// Volume MRI carregado (apos inferencia).
     pub(crate) volume: Option<crate::volume::VolumeData>,
+    // Medicao interativa
+    pub(crate) measure_active: bool,
+    pub(crate) measure_point_a: Option<crate::app::projection::MeasurePoint>,
+    pub(crate) measure_point_b: Option<crate::app::projection::MeasurePoint>,
+    // Tooltip contextual (mensagem + tempo restante)
+    pub(crate) tooltip_text: Option<String>,
+    pub(crate) tooltip_timer: f32,
+    // Help overlay (H)
+    pub(crate) show_help: bool,
 }
 
 impl App {
@@ -285,6 +294,12 @@ impl App {
             slice_position: 0.5,
             shift_held: false,
             volume: None,
+            measure_active: false,
+            measure_point_a: None,
+            measure_point_b: None,
+            tooltip_text: None,
+            tooltip_timer: 0.0,
+            show_help: false,
         }
     }
 }
