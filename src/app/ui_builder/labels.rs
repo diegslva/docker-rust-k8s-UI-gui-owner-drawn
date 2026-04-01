@@ -212,17 +212,22 @@ impl App {
             always.push(nav);
         }
 
-        // ── Botão "Voltar" — retorna à home screen (canto inferior esquerdo) ──
+        // ── Hints permanentes (canto inferior esquerdo) ──
         {
+            let hint_col = Color::rgb(80, 115, 155);
             let back = Label::new(
                 fs,
                 "Esc  \u{2190}  Tela inicial",
                 10.5,
-                Color::rgb(90, 130, 180),
+                hint_col,
                 28.0,
                 h - 20.0,
             );
             always.push(back);
+            let help_hint = Label::new(fs, "H  Atalhos", 10.5, hint_col, 180.0, h - 20.0);
+            always.push(help_hint);
+            let measure_hint = Label::new(fs, "M  Medir", 10.5, hint_col, 280.0, h - 20.0);
+            always.push(measure_hint);
         }
 
         // ── Marca d'água "NeuroScan" ─────────────────────────────────────────
